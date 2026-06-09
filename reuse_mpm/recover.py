@@ -47,7 +47,7 @@ def recover_global_E(
     dmask = torch.ones_like(density).int()
     onev = torch.ones(n, device=device)
     nu_t = torch.tensor(float(cfg.nu), device=device)
-    ss = cfg.delta_t / cfg.substep
+    ss = cfg.substep_size
     window = min(window, cfg.num_frames - 1)
     solver, state, model = build_mpm(scene, cfg, requires_grad=True)
 

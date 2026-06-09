@@ -3,6 +3,9 @@ name = "generative-phys"
 version = "0.0.0"
 description = "reuse_mpm: distill a video-diffusion teacher into an MPM physics-parameter generative model (on top of PhysDreamer)"
 requires-python = ">=3.9"
+dependencies = [
+    "tyro",   # dataclass-driven CLIs; the resolved config IS the serialized config
+]
 
 [tool.ty.environment]
 # Use the conda env that has torch/warp/physdreamer deps so ty resolves them.

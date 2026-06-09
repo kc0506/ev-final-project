@@ -33,6 +33,7 @@ from ._env import (
     render_gaussian_seq_w_mask_with_disp,
 )
 from .scene import SceneBundle
+from .config import SimConfig  # re-exported: callers may `from .sim_render import SimConfig`
 
 _WARP_INITED = False
 
@@ -42,22 +43,6 @@ def _ensure_warp() -> None:
     if not _WARP_INITED:
         wp.init()
         _WARP_INITED = True
-
-
-@dataclass
-class SimConfig:
-    num_frames: int = 14
-    substep: int = 64
-    grid_size: int = 32
-    density: float = 2000.0
-    material: str = "jelly"
-    grid_v_damping_scale: float = 1.1
-    nu: float = 0.3
-    fps: int = 7
-    delta_t: float = 1.0 / 30.0  # physical time per rendered frame
-
-    def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
 
 
 class RenderPipe:
@@ -120,12 +105,12 @@ def build_mpm(
         device=device,
         requires_grad=requires_grad,
         n_grid=cfg.grid_size,
-        grid_lim=1.0,
+        grid_lim=cfg.grid_lim,
     )
     model = MPMModelStruct()
     model.init(n, device=device, requires_grad=requires_grad)
-    model.init_other_params(n_grid=cfg.grid_size, grid_lim=1.0, device=device)
-    solver = MPMWARPDiff(n, n_grid=cfg.grid_size, grid_lim=1.0, device=device)
+    model.init_other_params(n_grid=cfg.grid_size, grid_lim=cfg.grid_lim, device=device)
+    solver = MPMWARPDiff(n, n_grid=cfg.grid_size, grid_lim=cfg.grid_lim, device=device)
     solver.set_parameters_dict(
         model,
         state,
@@ -192,7 +177,7 @@ def simulate_positions(
             init_xyzs, v0, F, C, device=device, requires_grad=False
         )
 
-        sub_dt = cfg.delta_t / cfg.substep
+        sub_dt = cfg.substep_size
         pos_list = [(init_xyzs.clone() * scene.scale) - scene.shift]
         prev = state
         for i in range(cfg.num_frames - 1):

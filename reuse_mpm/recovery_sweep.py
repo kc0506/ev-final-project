@@ -82,7 +82,7 @@ def run(args):
     density_mask = torch.ones_like(density).int()
     onev = torch.ones(n, device=device)
     nu_t = torch.tensor(float(cfg.nu), device=device)
-    substep_size = cfg.delta_t / cfg.substep
+    substep_size = cfg.substep_size
     window = min(args.window, cfg.num_frames - 1)
     solver, state, model = build_mpm(scene, cfg, requires_grad=True)
 

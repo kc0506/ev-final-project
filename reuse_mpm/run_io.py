@@ -112,7 +112,10 @@ class RunDir:
 
     def write_config(self, cfg: dict):
         cfg = dict(cfg)
+        # repo root = parent of the reuse_mpm package dir (where .git lives)
+        _repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         cfg["_provenance"] = {
+            "reuse_mpm_git": _git_describe(_repo_root),
             "physdreamer_git": _git_describe(
                 os.environ.get("PHYSDREAMER_ROOT", "/tmp2/b10401006/PhysDreamer")
             ),

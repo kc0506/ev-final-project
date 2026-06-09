@@ -70,7 +70,7 @@ def run(args):
     device = "cuda:0"
     os.makedirs(args.out, exist_ok=True)
     cfg = SimConfig(num_frames=args.num_frames, substep=args.substep, grid_size=args.grid_size)
-    substep_size = cfg.delta_t / cfg.substep
+    substep_size = cfg.substep_size
     summary = []
 
     for spec in args.scenes:

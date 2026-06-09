@@ -99,6 +99,20 @@ def load_scene(
     particle discretisation. Pass `cache_path`: the first call computes and saves
     the discretisation; later calls load it verbatim (gaussians/cameras are
     always re-read fresh, they are deterministic).
+
+    Read Artifacts:
+        point_cloud.ply               3DGS particles
+        clean_object_points.ply       Particles put into MPM 
+        internal_filled_points.ply    Points append to particles 
+        moving_part_points.ply        Particles that can move
+
+    Notes:
+        - Clean / moving only acts as mask. Themselves are not the actual particles used in MPM
+        - MPM particles = knn(3dgs[clean] + filled)
+            - Note that [~moving] also participate MPM! They are frozen by BC.
+            - 3dgs[clean] later in render stage  use top k to interpolate their movements.
+        - Coords transform: MPM = (3dgs + shift) / scale
+    
     """
 
     if name is None:
