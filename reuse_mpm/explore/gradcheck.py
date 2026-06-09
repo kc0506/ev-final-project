@@ -43,7 +43,8 @@ def build_argparser():
     p.add_argument("--grad_window", type=int, default=1)
     p.add_argument("--fd", type=float, default=0.02, help="finite-diff step on log10 E")
     p.add_argument("--v0", type=float, nargs=3, default=[0.0, -1.0, 0.0])
-    p.add_argument("--out", required=True)
+    p.add_argument("--out", default=None,
+                   help="override auto outputs/explore/gradcheck/<run>")
     return p
 
 
@@ -64,12 +65,13 @@ def run(args):
     pick_free_gpu()
     from ..sim_render import SimConfig, make_constant_v0, render_disp_frame
     from ..mpm_rollout import MpmRollout
+    from ..run_io import RunDir
 
     device = "cuda:0"
+    out = RunDir.create(__name__, "", args.out).root
     cfg = SimConfig(num_frames=args.num_frames, substep=args.substep, grid_size=32)
     W = args.window
     d = args.fd
-    os.makedirs(args.out, exist_ok=True)
     results = []
 
     for spec in args.scenes:
@@ -129,9 +131,9 @@ def run(args):
                   f"traj  an={ta:+.2e} num={tn:+.2e} [{'OK' if row['traj_ok'] else 'FLIP'}] | "
                   f"pixel an={pa:+.2e} num={pn:+.2e} [{'OK' if row['pixel_ok'] else 'FLIP'}]")
 
-    with open(os.path.join(args.out, "gradcheck.json"), "w") as f:
+    with open(os.path.join(out, "gradcheck.json"), "w") as f:
         json.dump({"args": vars(args), "results": results}, f, indent=2)
-    print(f"[gradcheck] -> {os.path.join(args.out, 'gradcheck.json')}")
+    print(f"[gradcheck] -> {os.path.join(out, 'gradcheck.json')}")
     return results
 
 

@@ -88,16 +88,19 @@ class SceneSpec:
 # --------------------------------------------------------------------------- #
 # Per-task configs (one per entrypoint)
 # --------------------------------------------------------------------------- #
+# `out` / `run_label` are the output-tree convention (see run_io): out=None ->
+# auto outputs/<task>/<NNNN>_<ts>[_<run_label>]; out=<path> overrides.
 @dataclass
 class ForwardConfig:
     """forward_gen: known constant E -> one video."""
 
     scene: SceneSpec
-    out: str
-    E: float  # constant Young's modulus
+    E: float  # constant Young's modulus (required)
     sim: SimConfig = field(default_factory=SimConfig)
     v0: Tuple[float, float, float] = (0.0, -0.5, 0.0)
     frame: str = "frame_00001.png"  # camera image filename
+    out: Optional[str] = None
+    run_label: str = ""
 
 
 @dataclass
@@ -105,7 +108,6 @@ class DatasetConfig:
     """dataset_gen: sample E~p*(E)=logU[E_min,E_max] -> (E, video) dataset."""
 
     scene: SceneSpec
-    out: str
     sim: SimConfig = field(default_factory=lambda: SimConfig(num_frames=8, substep=32))
     E_min: float = 1e4
     E_max: float = 1e6
@@ -114,6 +116,8 @@ class DatasetConfig:
     frame: str = "frame_00001.png"
     seed: int = 0
     jump_thresh: float = 0.5  # per-frame max normalised single-step jump -> unstable flag
+    out: Optional[str] = None
+    run_label: str = ""
 
 
 @dataclass
@@ -125,7 +129,6 @@ class RecoverConfig:
     """
 
     gt_run: str
-    out: str
     init_E: float = 3e5
     iters: int = 60
     lr: float = 0.1  # lr on log10(E)
@@ -133,3 +136,5 @@ class RecoverConfig:
     grad_window: int = 1  # frames keeping BPTT grad (truncated BPTT)
     coarse_init: bool = False
     coarse_n: int = 9
+    out: Optional[str] = None
+    run_label: str = ""

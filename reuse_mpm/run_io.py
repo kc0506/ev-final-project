@@ -8,16 +8,72 @@ Goal contract: one output dir == everything about that run.
   - (training adds) curves.png, metrics.json, ...
 
 This applies to *deliverables*. Throwaway debug artifacts are exempt.
+
+Output-tree convention
+----------------------
+Runs are auto-placed at  outputs/<task>/<NN>[_<label>]/  where <task> is derived
+from the entrypoint's module path (so it never drifts from a rename/move):
+
+    reuse_mpm.forward_gen        -> outputs/forward_gen/01_.../
+    reuse_mpm.explore.gradcheck  -> outputs/explore/gradcheck/01/
+
+`NN` auto-increments within each <task> dir so `ls` shows run order at a glance
+(no timestamp in the name -- the wall-clock time is written to a `started_at.txt`
+inside each run dir instead). The entrypoint passes its own `__name__` to
+`RunDir.create(__name__, ...)` (explicit, greppable -- no stack introspection);
+pass `out=` to override the auto-placement entirely (escape hatch for scratch).
 """
 from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
+import sys
 from dataclasses import asdict, dataclass, is_dataclass
+from datetime import datetime
 from typing import Optional
 
 import numpy as np
+
+_RUN_PREFIX_RE = re.compile(r"^(\d+)(?:_|$)")  # matches "07" and "07_label"
+
+
+def task_subpath_from_module(module: str, pkg: str = "reuse_mpm") -> str:
+    """'reuse_mpm.forward_gen' -> 'forward_gen';
+    'reuse_mpm.explore.gradcheck' -> 'explore/gradcheck'.
+
+    Under `python -m pkg.mod` the entrypoint's `__name__` is "__main__"; recover
+    the real dotted path from the __main__ module's import spec.
+    """
+    if module == "__main__":
+        spec = getattr(sys.modules.get("__main__"), "__spec__", None)
+        if spec is not None:
+            module = spec.name
+    prefix = pkg + "."
+    name = module[len(prefix):] if module.startswith(prefix) else module
+    return name.replace(".", "/")
+
+
+def next_run_dir(task_subpath: str, label: str = "", *, root: str = "outputs") -> str:
+    """Auto-incrementing run dir under outputs/<task_subpath>/.
+
+    Returns outputs/<task_subpath>/<NN>[_<label>] (not yet created -- RunDir makes
+    it). NN = 1 + max existing prefix in the task dir, so listing sorts by run
+    order. No timestamp in the name (RunDir.create writes started_at.txt instead).
+    Single-user box: the count scan is not locked (a simultaneous double-launch
+    could collide).
+    """
+    base = os.path.join(root, task_subpath)
+    os.makedirs(base, exist_ok=True)
+    nmax = 0
+    for d in os.listdir(base):
+        m = _RUN_PREFIX_RE.match(d)
+        if m and os.path.isdir(os.path.join(base, d)):
+            nmax = max(nmax, int(m.group(1)))
+    label = re.sub(r"[^0-9A-Za-z._-]+", "-", label).strip("-")
+    name = f"{nmax + 1:02d}" + (f"_{label}" if label else "")
+    return os.path.join(base, name)
 
 
 def _git_describe(path: str) -> Optional[str]:
@@ -92,6 +148,21 @@ class RunDir:
 
     def __post_init__(self):
         os.makedirs(self.root, exist_ok=True)
+
+    @classmethod
+    def create(cls, module: str, label: str = "", out: Optional[str] = None) -> "RunDir":
+        """Build a run dir following the output-tree convention (see module docstring).
+
+        `module` is the entrypoint's `__name__`; the task subpath is derived from
+        it. `out`, if given, is used verbatim (bypasses the auto convention).
+        Writes `started_at.txt` (wall-clock time, kept out of the dir name).
+        Returns an instance of `cls` (so subclasses keep their schema methods).
+        """
+        root = out or next_run_dir(task_subpath_from_module(module), label)
+        rd = cls(root)
+        with open(rd.path("started_at.txt"), "w") as f:
+            f.write(datetime.now().isoformat(timespec="seconds") + "\n")
+        return rd
 
     @property
     def frames_dir(self):

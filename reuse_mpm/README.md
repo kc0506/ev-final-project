@@ -35,48 +35,53 @@ dir's `config.json` (so the recorded config can't drift from the run).
   the canonical routines): `probe_identifiability`, `recovery_sweep`,
   `multiscene_fwdbwd`, `gradcheck`.
 
+## Output tree
+Runs auto-place at `outputs/<task>/<NN>[_<label>]/` (`<task>` from the module
+path, so `explore/*` nests automatically); `NN` is a 2-digit per-task counter and
+the wall-clock time goes in `started_at.txt` inside the run dir (not the name).
+Pass `--out <path>` to any entrypoint to override placement. Canonical tasks add a
+self-describing `<label>` from their key params.
+
 ## Canonical entrypoints (tyro; each writes a self-contained, reproducible run dir)
 Nested fields are addressed with dots, e.g. `--scene.path`, `--sim.substep`.
 ```bash
-# 1. forward: known E -> video
+# 1. forward: known E -> video   (-> outputs/forward_gen/NN_pd-telephone_E1e5/)
 $ENV/bin/python -m reuse_mpm.forward_gen \
     --scene.path $PHYSDREAMER_ROOT/data/physics_dreamer/telephone \
-    --E 1e5 --v0 0 -1 0 --sim.num-frames 8 --sim.substep 32 \
-    --out outputs/fwd_telephone_E1e5
+    --E 1e5 --v0 0 -1 0 --sim.num-frames 8 --sim.substep 32
 #   PhysGaussian scene: add --scene.kind pg --scene.path <model_dir>
 
 # 2. inverse: recover global E from a forward_gen run (reads its config.json)
 $ENV/bin/python -m reuse_mpm.train_global_E \
-    --gt_run outputs/fwd_telephone_E1e5 --init_E 3e5 --coarse-init \
-    --iters 24 --lr 0.04 --window 3 --grad_window 1 --out outputs/inv_headline
+    --gt_run outputs/forward_gen/01_pd-telephone_E1e5 --init_E 3e5 --coarse-init \
+    --iters 24 --lr 0.04 --window 3 --grad_window 1
 
 # 3. dataset: sample E~p*(E)=logU[E_min,E_max] -> (E, video) dataset
 #    saves per-frame mpm_xyz.npy + per-sample stability flag
 $ENV/bin/python -m reuse_mpm.dataset_gen \
     --scene.path .../telephone --E_min 1e4 --E_max 1e6 --n 256 \
-    --sim.substep 96 --seed 0 --out outputs/dataset_telephone_256
+    --sim.substep 96 --seed 0
 ```
 
 ## Exploration scripts (argparse; under reuse_mpm.explore)
 ```bash
 # identifiability / loss landscape (is E recoverable, over what range?)
 $ENV/bin/python -m reuse_mpm.explore.probe_identifiability \
-    --dataset_dir .../telephone --v0 0 -1 0 --E_star 1e5 --E_min 1e3 --E_max 1e7 \
-    --n 15 --out outputs/probe_v0_1
+    --dataset_dir .../telephone --v0 0 -1 0 --E_star 1e5 --E_min 1e3 --E_max 1e7 --n 15
 
 # honest recovery sweep (faithful PhysDreamer: substep 96, full BPTT, no cheat)
 $ENV/bin/python -m reuse_mpm.explore.recovery_sweep \
     --dataset_dir .../telephone --true_Es 3e4 1e5 3e5 --init_Es 1e4 3e4 1e5 3e5 1e6 \
-    --substep 96 --window 4 --iters 40 --out outputs/recsweep_faithful
+    --substep 96 --window 4 --iters 40
 
 # multi-scene forward+backward (PhysDreamer "pd:" + PhysGaussian "pg:")
 $ENV/bin/python -m reuse_mpm.explore.multiscene_fwdbwd \
     --scenes pd:.../telephone pg:.../ficus_whitebg-trained \
-    --true_E 1e5 --init_Es 3e4 3e5 --substep 96 --out outputs/multiscene_7
+    --true_E 1e5 --init_Es 3e4 3e5 --substep 96
 
 # gradient localisation: trajectory (MPM) vs pixel (MPM+3DGS)
 $ENV/bin/python -m reuse_mpm.explore.gradcheck --scenes pd:telephone \
-    --true_E 1e5 --points 3e4 3e5 --substep 32 --out outputs/gradcheck
+    --true_E 1e5 --points 3e4 3e5 --substep 32
 ```
 
 ## Scenes (7)
@@ -121,8 +126,11 @@ Each canonical task has a declarative run-dir class in `run_io.py`
 schema; writes are incremental. `config.json` is the resolved config dataclass
 (`asdict`) + a `task` tag + an `_provenance` block stamping the `reuse_mpm` and
 PhysDreamer git SHAs, so a run records exactly the code + config that produced it.
-Artifacts: `config.json`, `source_ply` (symlink), `frames/`, `video.mp4`/`.gif`,
-plus task extras (`recovery.png`+`metrics.json`+`trace.json`, dataset
+Every run dir (canonical and exploration) also gets a `started_at.txt` (wall-clock
+time, written by `RunDir.create`). Artifacts: `config.json`, `started_at.txt`,
+`source_ply` (symlink), `frames/`, `video.mp4`/`.gif`, plus task extras
+(`recovery.png`+`metrics.json`+`trace.json`, dataset
 `manifest.json`+`p_star.png`+`sample_XXXX/`). Exploration diagnostics
-(`landscape.png`, sweep `results.json`, …) are exempt.
+(`landscape.png`, sweep `results.json`, …) are exempt from the schema but still
+land under `outputs/explore/<script>/<NN>/`.
 ```

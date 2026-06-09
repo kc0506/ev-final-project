@@ -39,7 +39,10 @@ def run(cfg: DatasetConfig):
     from .run_io import DatasetRun
 
     t0 = time.time()
-    rd = DatasetRun(cfg.out)
+    label = cfg.run_label or (
+        f"{cfg.scene.kind}-{os.path.basename(os.path.normpath(cfg.scene.path))}"
+        f"_logU{cfg.E_min:g}-{cfg.E_max:g}_n{cfg.n}")
+    rd = DatasetRun.create(__name__, label, cfg.out)
 
     # p*(E) = log-uniform[E_min, E_max]; sample (seeded for reproducibility)
     rng = np.random.RandomState(cfg.seed)
@@ -65,8 +68,12 @@ def run(cfg: DatasetConfig):
         # truth); KNN/top_k/init/scale/shift live once in the shared scene_cache,
         # GS positions are reconstructable from these + KNN so we don't duplicate.
         pos_list = simulate_positions(scene, float(E), v0, cfg.sim)  # list[T] of [n,3] world
+        # jump metric over MOVING particles only: frozen/anchor particles carry a
+        # fixed v0-independent settling transient that otherwise floors the metric
+        # (~0.108 for telephone) and hides genuine moving-body blow-ups.
+        qm = scene.query_mask
         norm = [(p + scene.shift) / scene.scale for p in pos_list]
-        jumps = [float((norm[t] - norm[t - 1]).norm(dim=-1).max())
+        jumps = [float((norm[t] - norm[t - 1])[qm].norm(dim=-1).max())
                  for t in range(1, len(norm))]
         max_jump = max(jumps) if jumps else 0.0
         stable = bool(max_jump < cfg.jump_thresh)

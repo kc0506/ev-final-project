@@ -47,7 +47,9 @@ def run(cfg: RecoverConfig):
     from .recover import recover_global_E, plot_recovery
 
     t0 = time.time()
-    rd = RecoverRun(cfg.out)
+    label = cfg.run_label or (
+        f"from-{os.path.basename(os.path.normpath(cfg.gt_run))}_init{cfg.init_E:g}")
+    rd = RecoverRun.create(__name__, label, cfg.out)
 
     with open(os.path.join(cfg.gt_run, "config.json")) as f:
         g = json.load(f)

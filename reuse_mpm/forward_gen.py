@@ -9,6 +9,7 @@ Produces a self-contained run dir (config, source ply symlink, frames, mp4/gif).
 """
 from __future__ import annotations
 
+import os
 import time
 
 import tyro
@@ -25,7 +26,9 @@ def run(cfg: ForwardConfig):
     from .run_io import ForwardRun
 
     t0 = time.time()
-    rd = ForwardRun(cfg.out)
+    label = cfg.run_label or (
+        f"{cfg.scene.kind}-{os.path.basename(os.path.normpath(cfg.scene.path))}_E{cfg.E:g}")
+    rd = ForwardRun.create(__name__, label, cfg.out)
     if cfg.scene.kind == "pd":  # pg has no point_cloud.ply at the dir root
         rd.link_source_ply(cfg.scene.path)
 

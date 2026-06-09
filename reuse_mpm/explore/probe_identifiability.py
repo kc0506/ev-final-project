@@ -37,7 +37,8 @@ def build_argparser():
     p.add_argument("--grid_size", type=int, default=32)
     p.add_argument("--downsample_scale", type=float, default=0.1)
     p.add_argument("--frame", default="frame_00001.png")
-    p.add_argument("--out", required=True)
+    p.add_argument("--out", default=None,
+                   help="override auto outputs/explore/probe_identifiability/<run>")
     return p
 
 
@@ -50,7 +51,7 @@ def run(args):
     from ..run_io import RunDir, save_panel_video
 
     t0 = time.time()
-    rd = RunDir(args.out)
+    rd = RunDir.create(__name__, "", args.out)
 
     if args.scene_type == "pg":
         from ..scene_physgaussian import load_physgaussian_scene, default_pg_cache_path

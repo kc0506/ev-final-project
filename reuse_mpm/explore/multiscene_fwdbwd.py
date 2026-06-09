@@ -41,7 +41,8 @@ def build_argparser():
     p.add_argument("--lr", type=float, default=0.05)
     p.add_argument("--v0", type=float, nargs=3, default=[0.0, -1.0, 0.0])
     p.add_argument("--grid_size", type=int, default=32)
-    p.add_argument("--out", required=True)
+    p.add_argument("--out", default=None,
+                   help="override auto outputs/explore/multiscene_fwdbwd/<run>")
     return p
 
 
@@ -62,14 +63,14 @@ def run(args):
     from ..run_io import RunDir
 
     device = "cuda:0"
-    os.makedirs(args.out, exist_ok=True)
+    out = RunDir.create(__name__, "", args.out).root
     cfg = SimConfig(num_frames=args.num_frames, substep=args.substep, grid_size=args.grid_size)
     summary = []
 
     for spec in args.scenes:
         t0 = time.time()
         scene, kind = _load(spec, cfg)
-        sd = RunDir(os.path.join(args.out, f"{kind}_{scene.name}"))
+        sd = RunDir(os.path.join(out, f"{kind}_{scene.name}"))
         cam = scene.test_camera_list[0]
         v0 = make_constant_v0(scene, args.v0).detach()
         n = scene.sim_xyzs.shape[0]
@@ -106,11 +107,11 @@ def run(args):
         print(f"  [{kind}:{scene.name}] done in {scene_res['elapsed_sec']}s "
               f"(gt_motion={gt_motion:.4f}, frozen={scene_res['n_frozen']}/{n})")
 
-    with open(os.path.join(args.out, "summary.json"), "w") as f:
+    with open(os.path.join(out, "summary.json"), "w") as f:
         json.dump({"args": vars(args), "scenes": summary}, f, indent=2, default=str)
-    _summary_plot(args.out, summary, args.true_E)
-    print(f"[multiscene] {len(summary)} scenes -> {args.out}")
-    return args.out
+    _summary_plot(out, summary, args.true_E)
+    print(f"[multiscene] {len(summary)} scenes -> {out}")
+    return out
 
 
 def _scene_plot(sd, res, true_E):

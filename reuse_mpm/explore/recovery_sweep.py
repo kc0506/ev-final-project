@@ -51,7 +51,8 @@ def build_argparser():
     p.add_argument("--downsample_scale", type=float, default=0.1)
     p.add_argument("--v0", type=float, nargs=3, default=[0.0, -1.0, 0.0])
     p.add_argument("--frame", default="frame_00001.png")
-    p.add_argument("--out", required=True)
+    p.add_argument("--out", default=None,
+                   help="override auto outputs/explore/recovery_sweep/<run>")
     return p
 
 
@@ -61,10 +62,11 @@ def run(args):
     from ..sim_render import make_constant_v0, simulate_and_render
     from ..scene_io import load_from_spec
     from ..recover import recover_global_E
+    from ..run_io import RunDir
 
     device = "cuda:0"
     t0 = time.time()
-    os.makedirs(args.out, exist_ok=True)
+    out = RunDir.create(__name__, "", args.out).root
 
     cfg = SimConfig(num_frames=args.num_frames, substep=args.substep,
                     grid_size=args.grid_size)
@@ -93,16 +95,16 @@ def run(args):
                   f"rel_err={r['rel_err']*100:5.1f}%  (init/true={iE/tE:.2f}x)")
 
     import json
-    with open(os.path.join(args.out, "results.json"), "w") as f:
+    with open(os.path.join(out, "results.json"), "w") as f:
         json.dump({"args": vars(args), "results": results,
                    "elapsed_sec": round(time.time() - t0, 2)}, f, indent=2, default=str)
 
-    _plots(args, results)
-    print(f"[recsweep] {len(results)} runs in {time.time()-t0:.0f}s -> {args.out}")
-    return args.out
+    _plots(out, results)
+    print(f"[recsweep] {len(results)} runs in {time.time()-t0:.0f}s -> {out}")
+    return out
 
 
-def _plots(args, results):
+def _plots(out, results):
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -127,7 +129,7 @@ def _plots(args, results):
         ax.axhline(tE, color="r", ls="--", lw=2)
         ax.set_yscale("log"); ax.set_xlabel("iter"); ax.set_ylabel("E")
         ax.set_title(f"true E = {tE:.0e}"); ax.legend(fontsize=7)
-    fig.tight_layout(); fig.savefig(os.path.join(args.out, "E_vs_iter_by_GT.png"), dpi=120)
+    fig.tight_layout(); fig.savefig(os.path.join(out, "E_vs_iter_by_GT.png"), dpi=120)
     plt.close(fig)
 
     # summary: final E vs init E, one line per GT
@@ -142,7 +144,7 @@ def _plots(args, results):
     ax.set_xlabel("init E"); ax.set_ylabel("final recovered E (last-5 mean)")
     ax.set_title("recovery vs init (flat-to-true = converged regardless of init)")
     ax.legend(fontsize=8); fig.tight_layout()
-    fig.savefig(os.path.join(args.out, "final_vs_init.png"), dpi=120); plt.close(fig)
+    fig.savefig(os.path.join(out, "final_vs_init.png"), dpi=120); plt.close(fig)
 
 
 if __name__ == "__main__":
