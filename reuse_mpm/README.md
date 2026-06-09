@@ -126,8 +126,11 @@ Each canonical task has a declarative run-dir class in `run_io.py`
 schema; writes are incremental. `config.json` is the resolved config dataclass
 (`asdict`) + a `task` tag + an `_provenance` block stamping the `reuse_mpm` and
 PhysDreamer git SHAs, so a run records exactly the code + config that produced it.
-Every run dir (canonical and exploration) also gets a `started_at.txt` (wall-clock
-time, written by `RunDir.create`). Artifacts: `config.json`, `started_at.txt`,
+Every run dir keeps a `.events.txt` timeline: each RunDir write method appends a
+timestamped semantic event as it happens (`created` / `config.json` / `video.mp4`
+/ `metrics.json` …), and `finish()` seals any bypass writes (`np.save` /
+`plt.savefig` via `.path()`) in mtime order, then sorts the log chronologically.
+`RunDir.note(msg)` adds custom lines. Artifacts: `config.json`, `.events.txt`,
 `source_ply` (symlink), `frames/`, `video.mp4`/`.gif`, plus task extras
 (`recovery.png`+`metrics.json`+`trace.json`, dataset
 `manifest.json`+`p_star.png`+`sample_XXXX/`). Exploration diagnostics

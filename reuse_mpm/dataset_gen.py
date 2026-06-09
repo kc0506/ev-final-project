@@ -96,6 +96,7 @@ def run(cfg: DatasetConfig):
                         "max_frame_jump": max_jump, "stable": stable})
         flag = "" if stable else "  [UNSTABLE]"
         print(f"  [{i+1}/{cfg.n}] E={E:.3e}  max_jump={max_jump:.3f}{flag} -> {sd.root}")
+        sd.finish()  # seals this sample's mpm_xyz.npy + video.npy (np.save bypass)
 
     rd.manifest({
         "task": "dataset_gen",
@@ -125,6 +126,7 @@ def run(cfg: DatasetConfig):
     except Exception as e:
         print(f"[dataset] plot failed: {e}")
 
+    rd.finish()  # seals p_star.png (savefig bypass)
     print(f"[dataset] {cfg.n} samples, E in [{Es.min():.2e},{Es.max():.2e}] "
           f"-> {rd.root}  ({time.time()-t0:.1f}s)")
     return rd.root

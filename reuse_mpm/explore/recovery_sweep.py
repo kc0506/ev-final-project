@@ -66,7 +66,8 @@ def run(args):
 
     device = "cuda:0"
     t0 = time.time()
-    out = RunDir.create(__name__, "", args.out).root
+    rd = RunDir.create(__name__, "", args.out)
+    out = rd.root
 
     cfg = SimConfig(num_frames=args.num_frames, substep=args.substep,
                     grid_size=args.grid_size)
@@ -100,6 +101,7 @@ def run(args):
                    "elapsed_sec": round(time.time() - t0, 2)}, f, indent=2, default=str)
 
     _plots(out, results)
+    rd.finish()
     print(f"[recsweep] {len(results)} runs in {time.time()-t0:.0f}s -> {out}")
     return out
 

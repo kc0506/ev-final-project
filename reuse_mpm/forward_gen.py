@@ -55,6 +55,7 @@ def run(cfg: ForwardConfig):
         elapsed_sec=round(time.time() - t0, 2),
         mp4=mp4, gif=gif,
     )
+    rd.finish()
     print(f"[forward_gen] E={cfg.E:g} -> {mp4}  shape={vid_u8.shape}  "
           f"({time.time()-t0:.1f}s, {scene.sim_xyzs.shape[0]} particles)")
     return rd

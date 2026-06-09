@@ -63,7 +63,8 @@ def run(args):
     from ..run_io import RunDir
 
     device = "cuda:0"
-    out = RunDir.create(__name__, "", args.out).root
+    rd = RunDir.create(__name__, "", args.out)
+    out = rd.root
     cfg = SimConfig(num_frames=args.num_frames, substep=args.substep, grid_size=args.grid_size)
     summary = []
 
@@ -103,6 +104,7 @@ def run(args):
         scene_res["elapsed_sec"] = round(time.time() - t0, 1)
         sd.write_json("recovery.json", scene_res)
         _scene_plot(sd, scene_res, args.true_E)
+        sd.finish()  # seals recovery.png + the per-init pred videos
         summary.append(scene_res)
         print(f"  [{kind}:{scene.name}] done in {scene_res['elapsed_sec']}s "
               f"(gt_motion={gt_motion:.4f}, frozen={scene_res['n_frozen']}/{n})")
@@ -110,6 +112,7 @@ def run(args):
     with open(os.path.join(out, "summary.json"), "w") as f:
         json.dump({"args": vars(args), "scenes": summary}, f, indent=2, default=str)
     _summary_plot(out, summary, args.true_E)
+    rd.finish()
     print(f"[multiscene] {len(summary)} scenes -> {out}")
     return out
 

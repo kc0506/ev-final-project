@@ -68,7 +68,8 @@ def run(args):
     from ..run_io import RunDir
 
     device = "cuda:0"
-    out = RunDir.create(__name__, "", args.out).root
+    rd = RunDir.create(__name__, "", args.out)
+    out = rd.root
     cfg = SimConfig(num_frames=args.num_frames, substep=args.substep, grid_size=32)
     W = args.window
     d = args.fd
@@ -133,6 +134,7 @@ def run(args):
 
     with open(os.path.join(out, "gradcheck.json"), "w") as f:
         json.dump({"args": vars(args), "results": results}, f, indent=2)
+    rd.finish()
     print(f"[gradcheck] -> {os.path.join(out, 'gradcheck.json')}")
     return results
 

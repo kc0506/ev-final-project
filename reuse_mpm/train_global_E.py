@@ -112,6 +112,7 @@ def run(cfg: RecoverConfig):
     rd.trace(res["E_traj"], res["loss_traj"])
     plot_recovery(rd.path("recovery.png"), res, true_E,
                   title=f"{scene_spec.kind}:{scene.name}")
+    rd.finish()  # seals recovery.png (written via savefig, not a RunDir method)
 
     print(f"[train] {scene_spec.kind}:{scene.name} true={true_E:.3e} "
           f"recovered={res['recovered_E']:.3e} rel_err={res['rel_err']*100:.0f}% "

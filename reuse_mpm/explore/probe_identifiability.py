@@ -146,6 +146,7 @@ def run(args):
     except Exception as e:
         print(f"[probe] plot failed: {e}")
 
+    rd.finish()  # seals landscape.png + panel.gif (savefig/imageio bypass)
     print(f"[probe] argmin E={argmin_E:.2e} (true {args.E_star:.0e})  "
           f"left_mono={left_mono} right_mono={right_mono}  "
           f"-> {rd.path('landscape.png')}  ({time.time()-t0:.1f}s)")

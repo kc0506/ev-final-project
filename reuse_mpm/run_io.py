@@ -18,10 +18,18 @@ from the entrypoint's module path (so it never drifts from a rename/move):
     reuse_mpm.explore.gradcheck  -> outputs/explore/gradcheck/01/
 
 `NN` auto-increments within each <task> dir so `ls` shows run order at a glance
-(no timestamp in the name -- the wall-clock time is written to a `started_at.txt`
-inside each run dir instead). The entrypoint passes its own `__name__` to
+(no timestamp in the name). The entrypoint passes its own `__name__` to
 `RunDir.create(__name__, ...)` (explicit, greppable -- no stack introspection);
 pass `out=` to override the auto-placement entirely (escape hatch for scratch).
+
+Event log
+---------
+Each run dir keeps a `.events.txt` timeline. Every RunDir write method appends a
+timestamped *semantic* event (created / config.json / video.mp4 / metrics.json
+...) as it happens -- no filesystem watcher, because RunDir is the single write
+choke-point. `finish()` then seals the dir: any top-level file written *outside* a
+RunDir method (e.g. `np.save` / `plt.savefig` via `.path()`) is appended in
+file-mtime order, so the log is complete. `note(msg)` logs a custom line.
 """
 from __future__ import annotations
 
@@ -148,6 +156,7 @@ class RunDir:
 
     def __post_init__(self):
         os.makedirs(self.root, exist_ok=True)
+        self._logged: set = set()  # basenames already in .events.txt (for finish())
 
     @classmethod
     def create(cls, module: str, label: str = "", out: Optional[str] = None) -> "RunDir":
@@ -155,14 +164,52 @@ class RunDir:
 
         `module` is the entrypoint's `__name__`; the task subpath is derived from
         it. `out`, if given, is used verbatim (bypasses the auto convention).
-        Writes `started_at.txt` (wall-clock time, kept out of the dir name).
-        Returns an instance of `cls` (so subclasses keep their schema methods).
+        Opens the `.events.txt` timeline with a `created` event (this also records
+        the wall-clock start time). Returns an instance of `cls`.
         """
         root = out or next_run_dir(task_subpath_from_module(module), label)
         rd = cls(root)
-        with open(rd.path("started_at.txt"), "w") as f:
-            f.write(datetime.now().isoformat(timespec="seconds") + "\n")
+        rd._event("created")
         return rd
+
+    # ---- event log (.events.txt) ------------------------------------------- #
+    def _append(self, line: str) -> None:
+        with open(self.path(".events.txt"), "a") as f:
+            f.write(line + "\n")
+
+    def _event(self, msg: str, *files: str) -> None:
+        """Append a timestamped semantic event; register `files` as already-logged
+        so finish()'s mtime seal does not double-count them."""
+        self._logged.update(files)
+        self._append(f"{datetime.now().isoformat(timespec='seconds')}  {msg}")
+
+    def note(self, msg: str) -> None:
+        """Log a custom event line (e.g. progress) to .events.txt."""
+        self._event(msg)
+
+    def finish(self) -> None:
+        """Seal the timeline: append any top-level file written OUTSIDE a RunDir
+        method (np.save / plt.savefig via .path()) in mtime order, then 'finished'.
+        Catches the bypass writes the semantic instrumentation cannot see."""
+        seal = []
+        with os.scandir(self.root) as it:
+            for e in it:
+                if e.name == ".events.txt" or e.name in self._logged:
+                    continue
+                if e.is_file():  # skip dirs: frames/, sample_*/, gt/, ...
+                    seal.append((e.stat().st_mtime, e.name))
+        for mt, name in sorted(seal):
+            self._logged.add(name)
+            self._append(
+                f"{datetime.fromtimestamp(mt).isoformat(timespec='seconds')}  (seal) {name}")
+        self._event("finished")
+        # sort the whole timeline chronologically: seal lines carry real file
+        # mtimes that can predate later live events (ISO ts prefix sorts by time;
+        # stable sort keeps same-second insertion order, 'finished' stays last).
+        p = self.path(".events.txt")
+        lines = sorted((l for l in open(p).read().splitlines() if l), key=lambda l: l[:19])
+        with open(p, "w") as f:
+            f.write("\n".join(lines) + "\n")
 
     @property
     def frames_dir(self):
@@ -180,6 +227,7 @@ class RunDir:
         if os.path.islink(dst) or os.path.exists(dst):
             os.remove(dst)
         os.symlink(src, dst)
+        self._event("source_ply", "source_ply")
 
     def write_config(self, cfg: dict):
         cfg = dict(cfg)
@@ -193,10 +241,12 @@ class RunDir:
         }
         with open(self.path("config.json"), "w") as f:
             json.dump(cfg, f, indent=2, default=str)
+        self._event("config.json", "config.json")
 
     def write_json(self, name: str, obj: dict):
         with open(self.path(name), "w") as f:
             json.dump(obj, f, indent=2, default=str)
+        self._event(name, name)
 
     def save_named_video(self, subdir: str, vid_uint8: np.ndarray, fps: int):
         """Save a video (mp4+gif+frames) into <root>/<subdir>/. Returns that dir.
@@ -207,6 +257,7 @@ class RunDir:
         """
         sub = RunDir(os.path.join(self.root, subdir))
         sub.save_video(vid_uint8, fps=fps)
+        self._event(f"{subdir}/ (video, {len(vid_uint8)} frames)")
         return sub.root
 
     def save_video(self, vid_uint8: np.ndarray, fps: int, stem: str = "video"):
@@ -232,6 +283,7 @@ class RunDir:
 
         for t, fr in enumerate(vid_uint8):
             imageio.imwrite(os.path.join(self.frames_dir, f"frame_{t:03d}.png"), fr)
+        self._event(f"{stem}.mp4 ({len(vid_uint8)} frames)", f"{stem}.mp4", f"{stem}.gif")
         return mp4, gif
 
 
@@ -300,6 +352,7 @@ class DatasetRun(RunDir):
         if os.path.islink(dst) or os.path.exists(dst):
             os.remove(dst)
         os.symlink(os.path.abspath(target), dst)
+        self._event(name, name)
 
     def sample_dir(self, i: int) -> "RunDir":
         return RunDir(self.path(f"sample_{i:04d}"))
