@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from typing import Optional
 
 import numpy as np
@@ -162,3 +162,76 @@ class RunDir:
         for t, fr in enumerate(vid_uint8):
             imageio.imwrite(os.path.join(self.frames_dir, f"frame_{t:03d}.png"), fr)
         return mp4, gif
+
+
+# --------------------------------------------------------------------------- #
+# Declarative per-task run dirs
+#
+# Each subclass DECLARES (in its docstring + named methods) the exact set of
+# artifacts a task produces, so the output schema lives in one place instead of
+# being scattered as free-form `write_json`/`save_video` calls in the entrypoint.
+# Writes are still incremental (no buffering of tensors until a final flush);
+# `config()` serialises the resolved config DATACLASS verbatim, so config.json's
+# schema is identical across tasks (== the dataclass) and never hand-built.
+# --------------------------------------------------------------------------- #
+def _config_payload(cfg, task: str, **derived) -> dict:
+    d = asdict(cfg) if is_dataclass(cfg) else dict(cfg)
+    return {"task": task, **d, **derived}
+
+
+class ForwardRun(RunDir):
+    """forward_gen deliverables: config.json, source_ply, frames/, video.{mp4,gif}, result.json."""
+
+    def config(self, cfg, **derived) -> None:
+        self.write_config(_config_payload(cfg, "forward_gen", **derived))
+
+    def video(self, vid_u8: np.ndarray, fps: int):
+        return self.save_video(vid_u8, fps=fps)
+
+    def result(self, **obj) -> None:
+        self.write_json("result.json", obj)
+
+
+class RecoverRun(RunDir):
+    """train_global_E deliverables: config.json, source_ply, gt/ pred_init/
+    pred_recovered/ gt_vs_recovered/ videos, metrics.json, trace.json, recovery.png."""
+
+    def config(self, cfg, **derived) -> None:
+        self.write_config(_config_payload(cfg, "train_global_E", **derived))
+
+    def gt_video(self, gt_u8: np.ndarray, fps: int) -> None:
+        self.save_named_video("gt", gt_u8, fps)
+
+    def pred_videos(self, init_u8, recovered_u8, gt_u8, fps: int) -> None:
+        self.save_named_video("pred_init", init_u8, fps)
+        self.save_named_video("pred_recovered", recovered_u8, fps)
+        T = min(gt_u8.shape[0], recovered_u8.shape[0])
+        self.save_named_video(
+            "gt_vs_recovered",
+            np.concatenate([gt_u8[:T], recovered_u8[:T]], axis=2), fps)
+
+    def metrics(self, **obj) -> None:
+        self.write_json("metrics.json", obj)
+
+    def trace(self, E_traj, loss_traj) -> None:
+        self.write_json("trace.json", {"E": E_traj, "loss": loss_traj})
+
+
+class DatasetRun(RunDir):
+    """dataset_gen deliverables (top-level dir): config.json, manifest.json,
+    source_ply, scene_cache (symlink), p_star.png, sample_XXXX/ subdirs."""
+
+    def config(self, cfg, **derived) -> None:
+        self.write_config(_config_payload(cfg, "dataset_gen", **derived))
+
+    def link(self, target: str, name: str) -> None:
+        dst = self.path(name)
+        if os.path.islink(dst) or os.path.exists(dst):
+            os.remove(dst)
+        os.symlink(os.path.abspath(target), dst)
+
+    def sample_dir(self, i: int) -> "RunDir":
+        return RunDir(self.path(f"sample_{i:04d}"))
+
+    def manifest(self, obj: dict) -> None:
+        self.write_json("manifest.json", obj)
