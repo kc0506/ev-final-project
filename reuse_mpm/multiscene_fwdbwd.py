@@ -45,74 +45,45 @@ def build_argparser():
     return p
 
 
-def _load(spec, grid_size):
+def _load(spec, cfg):
+    """Load 'pd:<dir>' or 'pg:<model_dir>' via the unified SceneSpec dispatch."""
+    from .config import SceneSpec
+    from .scene_io import load_from_spec
     kind, path = spec.split(":", 1)
-    if kind == "pd":
-        from .scene import load_scene, default_cache_path
-        return load_scene(path, device="cuda:0", grid_size=grid_size,
-                          cache_path=default_cache_path(path, 0.1, grid_size)), "pd"
-    elif kind == "pg":
-        from .scene_physgaussian import load_physgaussian_scene, default_pg_cache_path
-        return load_physgaussian_scene(path, device="cuda:0", grid_size=grid_size,
-                                       cache_path=default_pg_cache_path(path, 0.1, grid_size)), "pg"
-    raise ValueError(f"bad scene spec {spec}")
+    return load_from_spec(SceneSpec(path=path, kind=kind, device="cuda:0"), cfg), kind
 
 
 def run(args):
     pick_free_gpu()
     from .sim_render import (
-        SimConfig, make_constant_v0, build_mpm, render_disp_frame,
-        simulate_and_render, video_to_uint8,
+        SimConfig, make_constant_v0, simulate_and_render, video_to_uint8,
     )
-    from .diff_sim import MPMDifferentiableSimulation
+    from .recover import recover_global_E
     from .run_io import RunDir
 
     device = "cuda:0"
     os.makedirs(args.out, exist_ok=True)
     cfg = SimConfig(num_frames=args.num_frames, substep=args.substep, grid_size=args.grid_size)
-    substep_size = cfg.substep_size
     summary = []
 
     for spec in args.scenes:
         t0 = time.time()
-        scene, kind = _load(spec, args.grid_size)
+        scene, kind = _load(spec, cfg)
         sd = RunDir(os.path.join(args.out, f"{kind}_{scene.name}"))
         cam = scene.test_camera_list[0]
         v0 = make_constant_v0(scene, args.v0).detach()
         n = scene.sim_xyzs.shape[0]
-        init_xyzs = scene.sim_xyzs.clone()
-        density = torch.ones_like(init_xyzs[..., 0]) * cfg.density
-        dmask = torch.ones_like(density).int()
-        onev = torch.ones(n, device=device)
-        nu_t = torch.tensor(float(cfg.nu), device=device)
-        window = min(args.window, cfg.num_frames - 1)
-        solver, state, model = build_mpm(scene, cfg, requires_grad=True)
 
         gt = simulate_and_render(scene, float(args.true_E), v0, cfg, cam).detach()
         gt_motion = (gt - gt[0:1]).abs().mean().item()
         sd.save_named_video("gt", video_to_uint8(gt), fps=cfg.fps)
 
         def recover(init_E):
-            logE = torch.tensor(float(np.log10(init_E)), device=device, requires_grad=True)
-            opt = torch.optim.Adam([logE], lr=args.lr)
-            Es, losses = [], []
-            for _ in range(args.iters):
-                opt.zero_grad()
-                ltot = 0.0
-                for ti in range(window):
-                    extra = max(0, (ti + 1 - args.grad_window) * cfg.substep)
-                    ng = cfg.substep * (ti + 1) - extra
-                    pos = MPMDifferentiableSimulation.apply(
-                        solver, state, model, 0, substep_size, ng,
-                        init_xyzs, v0, (10.0 ** logE) * onev, nu_t, density, dmask,
-                        None, device, True, extra)
-                    l = F.mse_loss(render_disp_frame(scene, pos, cam), gt[[ti + 1]]) / window
-                    l.backward()
-                    ltot += float(l.item())
-                opt.step()
-                Es.append(float(10.0 ** logE.item()))
-                losses.append(ltot)
-            return Es, losses
+            res = recover_global_E(
+                scene, gt, cfg, cam, v0, init_E=float(init_E), iters=args.iters,
+                lr=args.lr, window=args.window, grad_window=args.grad_window,
+                coarse_init=False, true_E=args.true_E, cosine=False, device=device)
+            return res["E_traj"], res["loss_traj"]
 
         scene_res = {"scene": scene.name, "kind": kind, "spec": spec,
                      "true_E": args.true_E, "n_mpm": n,

@@ -62,9 +62,8 @@ def _load(spec, grid_size=32):
 
 def run(args):
     pick_free_gpu()
-    from .scene import SceneBundle  # noqa
-    from .sim_render import SimConfig, make_constant_v0, build_mpm, render_disp_frame
-    from .diff_sim import MPMDifferentiableSimulation
+    from .sim_render import SimConfig, make_constant_v0, render_disp_frame
+    from .mpm_rollout import MpmRollout
 
     device = "cuda:0"
     cfg = SimConfig(num_frames=args.num_frames, substep=args.substep, grid_size=32)
@@ -81,21 +80,10 @@ def run(args):
         except Exception:
             pass
         v0 = make_constant_v0(scene, args.v0).detach()
-        n = scene.sim_xyzs.shape[0]
-        init = scene.sim_xyzs.clone()
-        dens = torch.ones(n, device=device) * cfg.density
-        dm = torch.ones(n, device=device).int()
-        nu = torch.tensor(float(cfg.nu), device=device)
-        ss = cfg.substep_size
-        onev = torch.ones(n, device=device)
-        solver, state, model = build_mpm(scene, cfg, requires_grad=True)
+        roll = MpmRollout(scene, cfg, requires_grad=True, device=device)
 
         def rollout(logE, ti, grad):
-            extra = max(0, (ti + 1 - args.grad_window) * cfg.substep)
-            ng = cfg.substep * (ti + 1) - extra
-            return MPMDifferentiableSimulation.apply(
-                solver, state, model, 0, ss, ng, init, v0, (10.0 ** logE) * onev,
-                nu, dens, dm, None, device, grad, extra)
+            return roll.rollout_to_frame(logE, ti, v0, args.grad_window, requires_grad=grad)
 
         # GT trajectory (detached positions) + GT video (detached) at true E
         le_true = torch.tensor(float(np.log10(args.true_E)), device=device)

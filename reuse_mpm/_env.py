@@ -36,6 +36,22 @@ from physdreamer.warp_mpm.mpm_data_structure import (  # noqa: E402
 from physdreamer.warp_mpm.mpm_solver_diff import MPMWARPDiff  # noqa: E402
 from physdreamer.warp_mpm.gaussian_sim_utils import get_volume  # noqa: E402
 
+# Low-level warp tape / kernel helpers used by the vendored differentiable
+# rollout (reuse_mpm/diff_sim.py). Routed through _env so diff_sim does not reach
+# into physdreamer.warp_mpm internals directly -- one boundary, not two.
+from physdreamer.warp_mpm.warp_utils import (  # noqa: E402
+    from_torch_safe,
+    MyTape,
+    CondTape,
+)
+from physdreamer.warp_mpm.mpm_utils import (  # noqa: E402
+    compute_posloss_with_grad,
+    aggregate_grad,
+)
+from physdreamer.warp_mpm.mpm_data_structure import (  # noqa: E402
+    get_float_array_product,
+)
+
 from local_utils import (  # noqa: E402
     find_far_points,
     apply_grid_bc_w_freeze_pts,
@@ -58,4 +74,11 @@ __all__ = [
     "downsample_with_kmeans_gpu",
     "downsample_with_kmeans_gpu_with_chunk",
     "render_gaussian_seq_w_mask_with_disp",
+    # warp tape / kernel helpers (for diff_sim)
+    "from_torch_safe",
+    "MyTape",
+    "CondTape",
+    "compute_posloss_with_grad",
+    "aggregate_grad",
+    "get_float_array_product",
 ]

@@ -23,13 +23,16 @@ from torch import Tensor
 
 import warp as wp
 
-from . import _env  # ensures physdreamer + warp on path
-from physdreamer.warp_mpm.warp_utils import from_torch_safe, MyTape, CondTape
-from physdreamer.warp_mpm.mpm_utils import (
+# All physdreamer/warp symbols come through the single _env boundary (not direct
+# physdreamer.warp_mpm.* imports), so the dependency surface lives in one place.
+from ._env import (
+    from_torch_safe,
+    MyTape,
+    CondTape,
     compute_posloss_with_grad,
     aggregate_grad,
+    get_float_array_product,
 )
-from physdreamer.warp_mpm.mpm_data_structure import get_float_array_product
 
 
 class MPMDifferentiableSimulation(autograd.Function):

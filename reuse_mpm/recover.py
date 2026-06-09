@@ -16,10 +16,9 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from .sim_render import (
-    SimConfig, build_mpm, render_disp_frame, simulate_and_render,
-)
-from .diff_sim import MPMDifferentiableSimulation
+from .config import SimConfig
+from .sim_render import render_disp_frame, simulate_and_render
+from .mpm_rollout import MpmRollout
 from .scene import SceneBundle
 
 
@@ -41,29 +40,16 @@ def recover_global_E(
     cosine: bool = True,
     device: str = "cuda:0",
 ) -> dict:
-    n = scene.sim_xyzs.shape[0]
-    init_xyzs = scene.sim_xyzs.clone()
-    density = torch.ones_like(init_xyzs[..., 0]) * cfg.density
-    dmask = torch.ones_like(density).int()
-    onev = torch.ones(n, device=device)
-    nu_t = torch.tensor(float(cfg.nu), device=device)
-    ss = cfg.substep_size
     window = min(window, cfg.num_frames - 1)
-    solver, state, model = build_mpm(scene, cfg, requires_grad=True)
+    roll = MpmRollout(scene, cfg, requires_grad=True, device=device)
 
-    # [question] So window is not actually "chunk" - you only use first `window` frame?
-
+    # `window` = number of frames (from t=1) whose photometric loss we sum each
+    # iter; each target frame is rolled out independently from the initial state
+    # (per-frame BPTT), with truncated grad controlled by `grad_window`.
     def step_grads(logE: torch.Tensor) -> float:
         tot = 0.0
         for ti in range(window):
-            extra = max(0, (ti + 1 - grad_window) * cfg.substep)  # 0 => full BPTT
-            num_grad = cfg.substep * (ti + 1) - extra  # [note] this is actually correct. `num_substeps + extra == total subusteps`
-            E_vec = (10.0 ** logE) * onev
-            # [note] ss = sub dt
-            pos = MPMDifferentiableSimulation.apply(
-                solver, state, model, 0, ss, num_grad,
-                init_xyzs, v0, E_vec, nu_t, density, dmask, None,
-                device, True, extra)
+            pos = roll.rollout_to_frame(logE, ti, v0, grad_window)
             l = F.mse_loss(render_disp_frame(scene, pos, cam), gt[[ti + 1]]) / window
             l.backward()
             tot += float(l.item())
