@@ -196,20 +196,29 @@ class RunDir:
         self._event(msg)
 
     def finish(self) -> None:
-        """Seal the timeline: append any top-level file written OUTSIDE a RunDir
-        method (np.save / plt.savefig via .path()) in mtime order, then 'finished'.
-        Catches the bypass writes the semantic instrumentation cannot see."""
-        seal = []
+        """Seal the timeline: append anything written OUTSIDE a RunDir method that
+        is not yet logged -- top-level files (np.save / plt.savefig via .path()) by
+        name, and immediate sub-DIRS as a one-line summary (so result dirs like
+        v_000/ show up without spamming a line per nested frame). Then 'finished'.
+        """
+        seal = []  # (mtime, register_name, display)
         with os.scandir(self.root) as it:
             for e in it:
                 if e.name == ".events.txt" or e.name in self._logged:
                     continue
-                if e.is_file():  # skip dirs: frames/, sample_*/, gt/, ...
-                    seal.append((e.stat().st_mtime, e.name))
-        for mt, name in sorted(seal):
+                mt = e.stat(follow_symlinks=False).st_mtime  # link's own mtime, not target's
+                if e.is_file():  # follows symlinks: a symlink->file counts as a file
+                    seal.append((mt, e.name, e.name))
+                elif e.is_dir():  # one summary per subdir, NOT per nested file
+                    try:
+                        n = sum(1 for _ in os.scandir(e.path))
+                    except OSError:
+                        n = 0
+                    seal.append((mt, e.name, f"{e.name}/ ({n} items)"))
+        for mt, name, display in sorted(seal):
             self._logged.add(name)
             self._append(
-                f"{datetime.fromtimestamp(mt).isoformat(timespec='seconds')}  (seal) {name}")
+                f"{datetime.fromtimestamp(mt).isoformat(timespec='seconds')}  (seal) {display}")
         self._event("finished")
         # sort the whole timeline chronologically: seal lines carry real file
         # mtimes that can predate later live events (ISO ts prefix sorts by time;
@@ -275,7 +284,7 @@ class RunDir:
         """
         sub = RunDir(os.path.join(self.root, subdir))
         sub.save_video(vid_uint8, fps=fps)
-        self._event(f"{subdir}/ (video, {len(vid_uint8)} frames)")
+        self._event(f"{subdir}/ (video, {len(vid_uint8)} frames)", subdir)
         return sub.root
 
     def save_video(self, vid_uint8: np.ndarray, fps: int, stem: str = "video"):
