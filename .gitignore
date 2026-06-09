@@ -1,0 +1,36 @@
+# ---- Heavy run artifacts (reproducible, 6+ GB) ----
+outputs/
+
+# ---- Teacher training artifacts (checkpoints, samples, caches) ----
+teacher/out_image/
+teacher/out_video/
+teacher/cache/
+
+# ---- Model weights / large binaries (anywhere) ----
+*.safetensors
+*.ckpt
+*.pth
+*.pt
+*.npy
+*.npz
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+
+# ---- Logs / scratch ----
+*.log
+tmp/
+.tmp/
+
+# ---- Env / editor ----
+.venv/
+.env
+.DS_Store
+.idea/
+.vscode/
+
+# ---- Claude local settings (keep shared skills, drop machine-local) ----
+.claude/settings.local.json

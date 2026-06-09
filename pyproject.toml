@@ -1,0 +1,19 @@
+[project]
+name = "generative-phys"
+version = "0.0.0"
+description = "reuse_mpm: distill a video-diffusion teacher into an MPM physics-parameter generative model (on top of PhysDreamer)"
+requires-python = ">=3.9"
+
+[tool.ty.environment]
+# Use the conda env that has torch/warp/physdreamer deps so ty resolves them.
+python = "/tmp2/b10401006/.symlinks/miniforge3/envs/physdreamer"
+
+# `physdreamer.*` and `local_utils` are NOT pip-installed; reuse_mpm/_env.py adds
+# these to sys.path at runtime. Mirror that here so ty/IDE can resolve the imports.
+extra-paths = [
+    "/tmp2/b10401006/PhysDreamer",                      # physdreamer.*
+    "/tmp2/b10401006/PhysDreamer/projects/inference",   # local_utils
+]
+
+[tool.ty.src]
+root = "."
