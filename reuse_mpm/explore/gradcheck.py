@@ -24,7 +24,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from .gpu import pick_free_gpu
+from ..gpu import pick_free_gpu
 
 PD_ROOT = os.environ.get("PHYSDREAMER_ROOT", "/tmp2/b10401006/PhysDreamer")
 PD_DATA = os.path.join(PD_ROOT, "data", "physics_dreamer")
@@ -50,11 +50,11 @@ def build_argparser():
 def _load(spec, grid_size=32):
     kind, name = spec.split(":", 1)
     if kind == "pd":
-        from .scene import load_scene, default_cache_path
+        from ..scene import load_scene, default_cache_path
         ds = os.path.join(PD_DATA, name)
         return load_scene(ds, device="cuda:0",
                           cache_path=default_cache_path(ds, 0.1, grid_size)), name
-    from .scene_physgaussian import load_physgaussian_scene, default_pg_cache_path
+    from ..scene_physgaussian import load_physgaussian_scene, default_pg_cache_path
     md = os.path.join(PG_ROOT, name)
     return load_physgaussian_scene(md, device="cuda:0",
                                    cache_path=default_pg_cache_path(md, 0.1, grid_size)), name
@@ -62,8 +62,8 @@ def _load(spec, grid_size=32):
 
 def run(args):
     pick_free_gpu()
-    from .sim_render import SimConfig, make_constant_v0, render_disp_frame
-    from .mpm_rollout import MpmRollout
+    from ..sim_render import SimConfig, make_constant_v0, render_disp_frame
+    from ..mpm_rollout import MpmRollout
 
     device = "cuda:0"
     cfg = SimConfig(num_frames=args.num_frames, substep=args.substep, grid_size=32)

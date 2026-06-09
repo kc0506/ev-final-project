@@ -24,7 +24,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from .gpu import pick_free_gpu
+from ..gpu import pick_free_gpu
 
 
 def build_argparser():
@@ -47,19 +47,19 @@ def build_argparser():
 
 def _load(spec, cfg):
     """Load 'pd:<dir>' or 'pg:<model_dir>' via the unified SceneSpec dispatch."""
-    from .config import SceneSpec
-    from .scene_io import load_from_spec
+    from ..config import SceneSpec
+    from ..scene_io import load_from_spec
     kind, path = spec.split(":", 1)
     return load_from_spec(SceneSpec(path=path, kind=kind, device="cuda:0"), cfg), kind
 
 
 def run(args):
     pick_free_gpu()
-    from .sim_render import (
+    from ..sim_render import (
         SimConfig, make_constant_v0, simulate_and_render, video_to_uint8,
     )
-    from .recover import recover_global_E
-    from .run_io import RunDir
+    from ..recover import recover_global_E
+    from ..run_io import RunDir
 
     device = "cuda:0"
     os.makedirs(args.out, exist_ok=True)

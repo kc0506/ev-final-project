@@ -31,7 +31,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from .gpu import pick_free_gpu
+from ..gpu import pick_free_gpu
 
 
 def build_argparser():
@@ -57,10 +57,10 @@ def build_argparser():
 
 def run(args):
     pick_free_gpu()
-    from .config import SceneSpec, SimConfig
-    from .sim_render import make_constant_v0, simulate_and_render
-    from .scene_io import load_from_spec
-    from .recover import recover_global_E
+    from ..config import SceneSpec, SimConfig
+    from ..sim_render import make_constant_v0, simulate_and_render
+    from ..scene_io import load_from_spec
+    from ..recover import recover_global_E
 
     device = "cuda:0"
     t0 = time.time()

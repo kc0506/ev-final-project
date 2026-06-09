@@ -19,7 +19,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from .gpu import pick_free_gpu
+from ..gpu import pick_free_gpu
 
 
 def build_argparser():
@@ -44,23 +44,23 @@ def build_argparser():
 def run(args):
     pick_free_gpu()
     # import after device selection so torch picks the right GPU
-    from .sim_render import (
+    from ..sim_render import (
         SimConfig, make_constant_v0, simulate_and_render, video_to_uint8,
     )
-    from .run_io import RunDir, save_panel_video
+    from ..run_io import RunDir, save_panel_video
 
     t0 = time.time()
     rd = RunDir(args.out)
 
     if args.scene_type == "pg":
-        from .scene_physgaussian import load_physgaussian_scene, default_pg_cache_path
+        from ..scene_physgaussian import load_physgaussian_scene, default_pg_cache_path
         scene = load_physgaussian_scene(
             args.dataset_dir, device="cuda:0",
             downsample_scale=args.downsample_scale, grid_size=args.grid_size,
             cache_path=default_pg_cache_path(args.dataset_dir, args.downsample_scale,
                                              args.grid_size))
     else:
-        from .scene import load_scene, default_cache_path
+        from ..scene import load_scene, default_cache_path
         rd.link_source_ply(args.dataset_dir)
         scene = load_scene(
             args.dataset_dir, device="cuda:0",
