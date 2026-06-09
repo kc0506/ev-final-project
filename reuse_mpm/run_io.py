@@ -38,6 +38,8 @@ import os
 import re
 import subprocess
 import sys
+import threading
+import traceback
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime
 from typing import Optional
@@ -45,6 +47,59 @@ from typing import Optional
 import numpy as np
 
 _RUN_PREFIX_RE = re.compile(r"^(\d+)(?:_|$)")  # matches "07" and "07_label"
+
+
+class _FdTee:
+    """FD-level tee of stdout+stderr to a log file.
+
+    Redirects the PROCESS file descriptors 1 and 2 (via os.dup2), not just the
+    Python `sys.stdout` object -- so output from C extensions / taichi /
+    subprocesses lands in the log too, not only Python-level `print`. A pump
+    thread copies the byte stream to BOTH the original terminal and the log
+    file, so it is a real tee (output stays live) rather than a swallow.
+
+    Used as a context manager around an entrypoint's run body; the captured log
+    therefore covers the whole run including any uncaught traceback.
+    """
+
+    def __init__(self, log_path: str):
+        self.log_path = log_path
+
+    def __enter__(self) -> "_FdTee":
+        self._log = open(self.log_path, "ab", buffering=0)  # unbuffered: crash-safe
+        sys.stdout.flush()
+        sys.stderr.flush()
+        self._saved_out = os.dup(1)  # keep the real terminal fds to tee back to
+        self._saved_err = os.dup(2)
+        r, w = os.pipe()
+        os.dup2(w, 1)  # fd 1 and 2 now both feed the pipe...
+        os.dup2(w, 2)
+        os.close(w)    # ...so only fd 1/2 hold the write end (EOF when both restored)
+        self._pump = threading.Thread(target=self._drain, args=(r,), daemon=True)
+        self._pump.start()
+        return self
+
+    def _drain(self, r: int) -> None:
+        with os.fdopen(r, "rb", buffering=0) as pipe:
+            for chunk in iter(lambda: pipe.read(65536), b""):
+                self._log.write(chunk)  # persisted log (priority)
+                try:
+                    os.write(self._saved_out, chunk)  # live terminal (best-effort)
+                except OSError:
+                    pass
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        if exc_type is not None:  # capture the crash INTO the log (still piped)
+            traceback.print_exc()
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os.dup2(self._saved_out, 1)  # restore real fds; drops the pipe write ends...
+        os.dup2(self._saved_err, 2)
+        self._pump.join()  # ...so pipe hits EOF; pump drains the tail to saved_out
+        os.close(self._saved_out)  # close only AFTER the pump is done using it
+        os.close(self._saved_err)
+        self._log.close()
+        return False  # don't suppress
 
 
 def task_subpath_from_module(module: str, pkg: str = "reuse_mpm") -> str:
@@ -245,6 +300,13 @@ class RunDir:
             os.remove(dst)
         os.symlink(src, dst)
         self._event("source_ply", "source_ply")
+
+    def capture_output(self, name: str = "console.log") -> _FdTee:
+        """Tee this process's stdout+stderr (FD level) into <root>/<name> for the
+        duration of the `with` block. Use it to wrap an entrypoint's run body so the
+        run dir keeps the full console transcript (taichi/C-ext output included)."""
+        self._event(name, name)
+        return _FdTee(self.path(name))
 
     def write_config(self, cfg: dict):
         cfg = dict(cfg)
