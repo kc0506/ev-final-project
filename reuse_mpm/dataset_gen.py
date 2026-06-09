@@ -40,9 +40,9 @@ def run(cfg: DatasetConfig):
 
     t0 = time.time()
     label = cfg.run_label or (
-        f"{cfg.scene.kind}-{os.path.basename(os.path.normpath(cfg.scene.path))}"
+        f"{cfg.scene.kind}-{cfg.scene.display_name}"
         f"_logU{cfg.E_min:g}-{cfg.E_max:g}_n{cfg.n}")
-    rd = DatasetRun.create(__name__, label, cfg.out)
+    rd = DatasetRun.create(__name__, label, cfg.out, config=cfg)  # auto-saves config.json
 
     # p*(E) = log-uniform[E_min, E_max]; sample (seeded for reproducibility)
     rng = np.random.RandomState(cfg.seed)
@@ -53,8 +53,7 @@ def run(cfg: DatasetConfig):
     cam = scene.camera_by_frame(cfg.frame)
     v0 = make_constant_v0(scene, cfg.v0)
 
-    # provenance + top-level symlinks
-    rd.config(cfg, scene_name=scene.name, n_mpm_particles=int(scene.sim_xyzs.shape[0]))
+    # top-level provenance symlinks (config.json was auto-saved at create)
     if cfg.scene.kind == "pd":
         rd.link(os.path.join(cfg.scene.path, "point_cloud.ply"), "source_ply")
     rd.link(cfg.scene.cache_path, "scene_cache")

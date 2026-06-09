@@ -15,8 +15,47 @@ Composition:
 """
 from __future__ import annotations
 
+import os
 from dataclasses import asdict, dataclass, field
+from enum import Enum
 from typing import List, Optional, Tuple
+
+try:  # py3.8+: Literal in typing
+    from typing import Literal
+except ImportError:  # pragma: no cover
+    from typing_extensions import Literal
+
+
+# --------------------------------------------------------------------------- #
+# Scene presets: name -> (kind, path), resolved against env-overridable roots.
+# A preset is the "I don't want to type a path" door; it bakes in the correct
+# kind, so the "looks like pd but I said pg" footgun cannot happen.
+# --------------------------------------------------------------------------- #
+_PD_DATA = os.path.join(
+    os.environ.get("PHYSDREAMER_ROOT", "/tmp2/b10401006/PhysDreamer"),
+    "data", "physics_dreamer",
+)
+_PG_ROOT = os.environ.get("PG_ROOT", "/tmp2/b10401006/PhysGaussian/model")
+
+
+class ScenePreset(Enum):
+    telephone = "telephone"
+    alocasia = "alocasia"
+    carnations = "carnations"
+    hat = "hat"
+    ficus = "ficus"
+    bread = "bread"
+
+
+# (kind, path) for each preset
+PRESETS: dict = {
+    ScenePreset.telephone: ("pd", os.path.join(_PD_DATA, "telephone")),
+    ScenePreset.alocasia: ("pd", os.path.join(_PD_DATA, "alocasia")),
+    ScenePreset.carnations: ("pd", os.path.join(_PD_DATA, "carnations")),
+    ScenePreset.hat: ("pd", os.path.join(_PD_DATA, "hat")),
+    ScenePreset.ficus: ("pg", os.path.join(_PG_ROOT, "ficus_whitebg-trained")),
+    ScenePreset.bread: ("pg", os.path.join(_PG_ROOT, "bread-trained")),
+}
 
 
 # --------------------------------------------------------------------------- #
@@ -60,16 +99,24 @@ class SimConfig:
 class SceneSpec:
     """Which scene to load and how to discretise it into MPM particles.
 
-    `kind` selects the loader: "pd" = PhysDreamer dataset dir (foreground is
-    segmented from a full scene via clean/moving plys), "pg" = PhysGaussian model
-    dir (all gaussians are the object; anchor BC is a geometric bottom slab).
+    Two DISJOINT ways to name the scene (exactly one, enforced at construction):
+      - `preset`: an enum that bakes in the correct (kind, path). One word, no
+        path, no chance of a kind/path mismatch.
+      - `path` + `kind`: spell out every field yourself. `kind` is REQUIRED here
+        and never inferred -- if you take the explicit door you state pd/pg.
+
+    `preset` is consumed in __post_init__: it resolves into `kind`/`path` (and
+    `name`), so every consumer afterwards just reads `.kind` / `.path` -- no
+    preset-vs-path branching anywhere downstream. The serialized form is always
+    the resolved (kind, path), so config.json round-trips cleanly.
 
     `grid_size` is intentionally NOT here: it must equal SimConfig.grid_size, so
     the loader reads it from the SimConfig at load time (single source of truth).
     """
 
-    path: str  # dataset_dir (pd) or model_dir (pg)
-    kind: str = "pd"  # "pd" | "pg"
+    preset: Optional[ScenePreset] = None
+    path: Optional[str] = None  # dataset_dir (pd) or model_dir (pg)
+    kind: Optional[Literal["pd", "pg"]] = None
     name: Optional[str] = None
     downsample_scale: float = 0.1
     top_k: int = 8
@@ -80,6 +127,30 @@ class SceneSpec:
     # pg-only geometric anchor BC
     freeze_frac: float = 0.15
     freeze_axis: Optional[int] = None
+
+    def __post_init__(self):
+        if self.preset is not None:
+            if self.path is not None:
+                raise ValueError(
+                    "scene: choose EITHER --scene.preset OR --scene.path, not both")
+            self.kind, self.path = PRESETS[self.preset]
+            if self.name is None:
+                self.name = self.preset.value
+            self.preset = None  # consumed -> serialized form is the resolved (kind, path)
+        else:
+            if self.path is None:
+                raise ValueError(
+                    "scene: give --scene.preset <name>, or "
+                    "--scene.path <dir> --scene.kind {pd,pg}")
+            if self.kind is None:
+                raise ValueError(
+                    "scene: --scene.path requires --scene.kind {pd,pg} "
+                    "(kind is never inferred, by design)")
+
+    @property
+    def display_name(self) -> str:
+        """Human label: explicit name, else the leaf dir of the resolved path."""
+        return self.name or os.path.basename(os.path.normpath(self.path))
 
     def to_dict(self) -> dict:
         return asdict(self)

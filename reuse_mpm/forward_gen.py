@@ -26,9 +26,8 @@ def run(cfg: ForwardConfig):
     from .run_io import ForwardRun
 
     t0 = time.time()
-    label = cfg.run_label or (
-        f"{cfg.scene.kind}-{os.path.basename(os.path.normpath(cfg.scene.path))}_E{cfg.E:g}")
-    rd = ForwardRun.create(__name__, label, cfg.out)
+    label = cfg.run_label or f"{cfg.scene.kind}-{cfg.scene.display_name}_E{cfg.E:g}"
+    rd = ForwardRun.create(__name__, label, cfg.out, config=cfg)  # auto-saves config.json
     if cfg.scene.kind == "pd":  # pg has no point_cloud.ply at the dir root
         rd.link_source_ply(cfg.scene.path)
 
@@ -39,21 +38,17 @@ def run(cfg: ForwardConfig):
         cam = scene.test_camera_list[0]  # PG cameras (r_0, ...) won't match frame_*
     v0 = make_constant_v0(scene, cfg.v0)
 
-    rd.config(
-        cfg,
-        scene_name=scene.name,
-        n_mpm_particles=int(scene.sim_xyzs.shape[0]),
-        n_sim_gaussians=int(scene.sim_mask.sum().item()),
-    )
-
     vid = simulate_and_render(scene, cfg.E, v0, cfg.sim, cam, requires_grad=False)
     vid_u8 = video_to_uint8(vid)
     mp4, gif = rd.video(vid_u8, fps=cfg.sim.fps)
 
-    rd.result(
+    rd.result(  # derived run facts live with the result, not the input config
         video_shape=list(vid_u8.shape),
         elapsed_sec=round(time.time() - t0, 2),
         mp4=mp4, gif=gif,
+        scene_cache=cfg.scene.cache_path,  # resolved by load_from_spec
+        n_mpm_particles=int(scene.sim_xyzs.shape[0]),
+        n_sim_gaussians=int(scene.sim_mask.sum().item()),
     )
     rd.finish()
     print(f"[forward_gen] E={cfg.E:g} -> {mp4}  shape={vid_u8.shape}  "

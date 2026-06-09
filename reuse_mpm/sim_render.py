@@ -52,16 +52,18 @@ class RenderPipe:
 
 
 class _RenderParams:
+    """Attribute bag for PhysDreamer's render fns: they read only gaussians,
+    render_pipe and bg_color (camera comes in as a separate positional arg, so no
+    camera_list here -- verified against local_utils.render_gaussian_seq_*)."""
+
     def __init__(
         self,
         gaussians: GaussianModel,
-        camera_list: List[Camera],
         bg_color: torch.Tensor,
     ) -> None:
         self.render_pipe = RenderPipe()
         self.bg_color = bg_color
         self.gaussians = gaussians
-        self.camera_list = camera_list
 
 
 def make_constant_v0(
@@ -205,7 +207,7 @@ def render_positions(
     init_pos = pos_list[0]
     pos_diff_list = [p - init_pos for p in pos_list]
     bg = torch.tensor([1.0, 1.0, 1.0], dtype=torch.float32, device=device)
-    rp = _RenderParams(scene.gaussians, scene.test_camera_list, bg)
+    rp = _RenderParams(scene.gaussians, bg)
     cams = [cam] * len(pos_list)
     vid = render_gaussian_seq_w_mask_with_disp(
         cams, rp, init_pos, scene.top_k_index, pos_diff_list, scene.sim_mask
@@ -230,7 +232,7 @@ def render_disp_frame(
     undeformed = (scene.sim_xyzs * scene.scale - scene.shift).detach()
     disp = world_pos - undeformed
     bg = torch.tensor([1.0, 1.0, 1.0], dtype=torch.float32, device=device)
-    rp = _RenderParams(scene.gaussians, scene.test_camera_list, bg)
+    rp = _RenderParams(scene.gaussians, bg)
     vid = render_gaussian_seq_w_mask_with_disp(
         cam, rp, undeformed, scene.top_k_index, [disp], scene.sim_mask
     )

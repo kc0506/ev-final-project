@@ -159,17 +159,25 @@ class RunDir:
         self._logged: set = set()  # basenames already in .events.txt (for finish())
 
     @classmethod
-    def create(cls, module: str, label: str = "", out: Optional[str] = None) -> "RunDir":
+    def create(cls, module: str, label: str = "", out: Optional[str] = None,
+               config=None) -> "RunDir":
         """Build a run dir following the output-tree convention (see module docstring).
 
         `module` is the entrypoint's `__name__`; the task subpath is derived from
         it. `out`, if given, is used verbatim (bypasses the auto convention).
-        Opens the `.events.txt` timeline with a `created` event (this also records
-        the wall-clock start time). Returns an instance of `cls`.
+        Opens the `.events.txt` timeline with a `created` event.
+
+        If `config` (a dataclass, e.g. the tyro-parsed task config) is passed, its
+        resolved values are AUTO-SAVED to config.json right here -- the entrypoint
+        no longer hand-writes the base config. Run-specific extras (derived facts,
+        reconstructed sub-config) are added afterwards via `merge_config(**extra)`.
+        Returns an instance of `cls`.
         """
         root = out or next_run_dir(task_subpath_from_module(module), label)
         rd = cls(root)
         rd._event("created")
+        if config is not None:
+            rd.write_config(_config_payload(config, task_subpath_from_module(module)))
         return rd
 
     # ---- event log (.events.txt) ------------------------------------------- #
@@ -243,6 +251,16 @@ class RunDir:
             json.dump(cfg, f, indent=2, default=str)
         self._event("config.json", "config.json")
 
+    def merge_config(self, **extra) -> None:
+        """Merge run-specific extras into the already-written config.json (derived
+        facts / reconstructed sub-config not present in the auto-saved dataclass)."""
+        p = self.path("config.json")
+        d = json.load(open(p)) if os.path.exists(p) else {}
+        d.update(extra)
+        with open(p, "w") as f:
+            json.dump(d, f, indent=2, default=str)
+        self._event("config.json (+extra)", "config.json")
+
     def write_json(self, name: str, obj: dict):
         with open(self.path(name), "w") as f:
             json.dump(obj, f, indent=2, default=str)
@@ -305,9 +323,6 @@ def _config_payload(cfg, task: str, **derived) -> dict:
 class ForwardRun(RunDir):
     """forward_gen deliverables: config.json, source_ply, frames/, video.{mp4,gif}, result.json."""
 
-    def config(self, cfg, **derived) -> None:
-        self.write_config(_config_payload(cfg, "forward_gen", **derived))
-
     def video(self, vid_u8: np.ndarray, fps: int):
         return self.save_video(vid_u8, fps=fps)
 
@@ -318,9 +333,6 @@ class ForwardRun(RunDir):
 class RecoverRun(RunDir):
     """train_global_E deliverables: config.json, source_ply, gt/ pred_init/
     pred_recovered/ gt_vs_recovered/ videos, metrics.json, trace.json, recovery.png."""
-
-    def config(self, cfg, **derived) -> None:
-        self.write_config(_config_payload(cfg, "train_global_E", **derived))
 
     def gt_video(self, gt_u8: np.ndarray, fps: int) -> None:
         self.save_named_video("gt", gt_u8, fps)
@@ -343,9 +355,6 @@ class RecoverRun(RunDir):
 class DatasetRun(RunDir):
     """dataset_gen deliverables (top-level dir): config.json, manifest.json,
     source_ply, scene_cache (symlink), p_star.png, sample_XXXX/ subdirs."""
-
-    def config(self, cfg, **derived) -> None:
-        self.write_config(_config_payload(cfg, "dataset_gen", **derived))
 
     def link(self, target: str, name: str) -> None:
         dst = self.path(name)

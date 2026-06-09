@@ -49,7 +49,7 @@ def run(cfg: RecoverConfig):
     t0 = time.time()
     label = cfg.run_label or (
         f"from-{os.path.basename(os.path.normpath(cfg.gt_run))}_init{cfg.init_E:g}")
-    rd = RecoverRun.create(__name__, label, cfg.out)
+    rd = RecoverRun.create(__name__, label, cfg.out, config=cfg)  # auto-saves RecoverConfig
 
     with open(os.path.join(cfg.gt_run, "config.json")) as f:
         g = json.load(f)
@@ -66,10 +66,10 @@ def run(cfg: RecoverConfig):
     frame = g["frame"]
     device = scene_spec.device
 
-    assert scene_spec.cache_path and os.path.exists(scene_spec.cache_path), (
-        f"GT run has no usable scene cache ({scene_spec.cache_path}); regenerate "
-        "GT with the cache-aware forward_gen so particles match.")
-
+    # The discretisation cache path is deterministic from (scene, downsample,
+    # grid, top_k), all read from the GT config -- so load_from_spec re-derives
+    # the SAME path the GT run created and loads the identical particles. (The
+    # auto-saved GT config may carry cache_path=None when it was the default.)
     gt = _load_gt_frames(cfg.gt_run, device)
     scene = load_from_spec(scene_spec, sim)
     if scene_spec.kind == "pd":
@@ -97,8 +97,9 @@ def run(cfg: RecoverConfig):
         simulate_and_render(scene, res["recovered_E"], v0, sim, cam).detach())
     rd.pred_videos(pred_init, pred_final, gt_u8, fps=sim.fps)
 
-    rd.config(
-        cfg,
+    # the scene/sim were RECONSTRUCTED from the GT run (not in RecoverConfig), so
+    # merge them into the auto-saved config as the "special" extras.
+    rd.merge_config(
         scene=scene_spec.to_dict(), sim=sim.to_dict(),
         scene_name=scene.name, true_E=true_E, v0=v0_vec,
         n_mpm_particles=int(scene.sim_xyzs.shape[0]),
