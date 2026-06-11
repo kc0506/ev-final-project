@@ -52,5 +52,8 @@ def load_from_spec(spec: SceneSpec, sim: SimConfig) -> SceneBundle:
             top_k=spec.top_k,
             max_particles=spec.max_particles,
             cache_path=spec.cache_path,
+            freeze_mode=spec.freeze_mode,
+            freeze_frac=spec.freeze_frac,
+            freeze_axis=spec.freeze_axis,
         )
     raise ValueError(f"unknown scene kind {spec.kind!r} (expected 'pd' or 'pg')")

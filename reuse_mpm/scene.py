@@ -78,6 +78,20 @@ def default_cache_path(dataset_dir, downsample_scale, grid_size, top_k=8):
     return os.path.join(_CACHE_ROOT, fname)
 
 
+def geometric_bottom_slab(
+    sim_xyzs: torch.Tensor, freeze_frac: float = 0.1, freeze_axis: Optional[int] = None
+) -> torch.Tensor:
+    """Freeze the lowest `freeze_frac` fraction of particles along `freeze_axis`
+    (default: the longest axis) -- a structural base anchor that does NOT depend on
+    moving_part_points or the (non-deterministic) k-means particle positions, so it
+    stays stable across cache rebuilds. Same anchor the PhysGaussian loader uses.
+    """
+    ax = freeze_axis if freeze_axis is not None else int(
+        (sim_xyzs.max(0)[0] - sim_xyzs.min(0)[0]).argmax().item())
+    thr = torch.quantile(sim_xyzs[:, ax], freeze_frac)
+    return sim_xyzs[:, ax] < thr
+
+
 def load_scene(
     dataset_dir: str,
     name: Optional[str] = None,
@@ -88,6 +102,9 @@ def load_scene(
     max_particles: int = 8000,
     resolution: Optional[List[int]] = None,
     cache_path: Optional[str] = None,
+    freeze_mode: str = "moving",
+    freeze_frac: float = 0.1,
+    freeze_axis: Optional[int] = None,
 ) -> SceneBundle:
     """Build a SceneBundle from a PhysDreamer-format scene directory.
 
@@ -179,6 +196,7 @@ def load_scene(
         scale = (pos_max - pos_min) * 1.8
         shift = -pos_min + (pos_max - pos_min) * 0.25
 
+        # [note] filled does not modify gaussians! so it's MPM only, not affecting rendering.
         filled = os.path.join(dataset_dir, "internal_filled_points.ply")
         if os.path.exists(filled):
             fill = torch.from_numpy(pcu.load_mesh_v(filled)).float().to(device)
@@ -197,7 +215,21 @@ def load_scene(
 
         # for tele: 7w -> 7k
         num_cluster = min(int(sim_xyzs.shape[0] * downsample_scale), max_particles)
+        # kmeans_gpu snaps EMPTY clusters to EXACTLY [0,0,0]: fit_predict overwrites
+        # a point-less cluster with c_grad=0 at lr=1, and the final aggregation sums
+        # over an empty assigned set -> 0. Such origin "ghosts" then get frozen by
+        # find_far_points and clamped inward by g2p, polluting the MPM cloud. The
+        # normalisation puts every real coord at >= 0.25/1.8 > 0, so an exact-zero
+        # output row is unambiguously a ghost. Assert that precondition (so the
+        # zero-filter can never hit a real point), then drop ghosts BEFORE deriving
+        # KNN / volume / freeze_mask (all indexed off sim_xyzs).
+        assert (sim_xyzs.min(dim=0).values > 0).all(), \
+            "pre-kmeans particles have a coord <= 0; exact-zero ghost filter unsafe"
         sim_xyzs = downsample_with_kmeans_gpu_with_chunk(sim_xyzs, num_cluster)
+        ghost = (sim_xyzs == 0).all(dim=1)
+        if bool(ghost.any()):
+            print(f"[scene] dropped {int(ghost.sum())} k-means empty-cluster ghost(s) at origin")
+            sim_xyzs = sim_xyzs[~ghost]
 
         sim_gauss_pos = (gauss._xyz[sim_mask, :].detach().clone() + shift) / scale
         cdist = torch.cdist(sim_gauss_pos, sim_xyzs) * -1.0
@@ -232,6 +264,14 @@ def load_scene(
             }, cache_path)
             print(f"[scene] saved discretisation cache -> {cache_path} "
                   f"({sim_xyzs.shape[0]} particles)")
+
+    # B-2 robust anchor: override the moving-ply freeze with a geometric bottom
+    # slab, computed from the (cached) sim_xyzs at load time -> no cache rebuild
+    # needed to switch, and stable across the non-deterministic k-means draw.
+    if freeze_mode == "slab":
+        freeze_mask = geometric_bottom_slab(sim_xyzs, freeze_frac, freeze_axis)
+        print(f"[scene] freeze_mode=slab: {int(freeze_mask.sum())}/{freeze_mask.shape[0]} "
+              f"frozen (axis={freeze_axis}, frac={freeze_frac})")
 
     return SceneBundle(
         name=name,

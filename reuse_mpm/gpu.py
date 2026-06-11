@@ -69,11 +69,12 @@ def pick_free_gpu(min_free_mib: int = 8000, min_quota_hours: float = 8.0,
     is already set by the caller -- but the quota floor is still enforced.
     """
     assert_gpu_quota(min_quota_hours, verbose=verbose)  # before touching CUDA
-    if os.environ.get("CUDA_VISIBLE_DEVICES"):
-        if verbose:
-            print(f"[gpu] CUDA_VISIBLE_DEVICES preset to "
-                  f"{os.environ['CUDA_VISIBLE_DEVICES']}")
-        return int(os.environ["CUDA_VISIBLE_DEVICES"].split(",")[0])
+    # Forbid hard-coded GPU to prevent outage.
+    # if os.environ.get("CUDA_VISIBLE_DEVICES"):
+    #     if verbose:
+    #         print(f"[gpu] CUDA_VISIBLE_DEVICES preset to "
+    #               f"{os.environ['CUDA_VISIBLE_DEVICES']}")
+    #     return int(os.environ["CUDA_VISIBLE_DEVICES"].split(",")[0])
     try:
         out = subprocess.check_output(
             ["nvidia-smi", "--query-gpu=index,memory.free",

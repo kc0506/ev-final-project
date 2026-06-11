@@ -33,6 +33,7 @@ file-mtime order, so the log is complete. `note(msg)` logs a custom line.
 """
 from __future__ import annotations
 
+import functools
 import json
 import os
 import re
@@ -301,6 +302,16 @@ class RunDir:
         os.symlink(src, dst)
         self._event("source_ply", "source_ply")
 
+    def copy_in(self, src: str, name: str) -> None:
+        """COPY an external file into the run dir (immutable snapshot). Unlike a
+        symlink, this survives the source being later rebuilt/deleted -- used to
+        freeze the exact scene-discretisation cache each run actually used, since
+        the shared cache is non-deterministic and gets rebuilt."""
+        import shutil
+        if src and os.path.exists(src):
+            shutil.copy2(src, self.path(name))
+            self._event(name, name)
+
     def capture_output(self, name: str = "console.log") -> _FdTee:
         """Tee this process's stdout+stderr (FD level) into <root>/<name> for the
         duration of the `with` block. Use it to wrap an entrypoint's run body so the
@@ -349,31 +360,30 @@ class RunDir:
         self._event(f"{subdir}/ (video, {len(vid_uint8)} frames)", subdir)
         return sub.root
 
-    def save_video(self, vid_uint8: np.ndarray, fps: int, stem: str = "video"):
-        """vid_uint8: [T,H,W,C]. Writes mp4 + gif + per-frame pngs."""
+    def save_video(self, vid_uint8: np.ndarray, fps: int, stem: str = "video",
+                   frames: bool = True, gif: bool = True):
+        """vid_uint8: [T,H,W,C]. Writes mp4 (+ gif + per-frame pngs unless disabled).
+
+        frames/gif default True (back-compat). Set both False for the light
+        per-sample IO of large datasets: just the mp4. video.npy + mpm_xyz.npy
+        carry the data; frames/plys are reconstructable on demand."""
+        import imageio
         import mediapy
 
         mp4 = self.path(f"{stem}.mp4")
-        gif = self.path(f"{stem}.gif")
+        gif_path = self.path(f"{stem}.gif")
         mediapy.write_video(mp4, vid_uint8, fps=fps)
-        try:
-            mediapy.write_image(gif, vid_uint8[0])  # placeholder if gif unsupported
-        except Exception:
-            pass
-        # robust gif via imageio
-        try:
-            import imageio
-
-            imageio.mimsave(gif, list(vid_uint8), fps=fps, loop=0)
-        except Exception:
-            pass
-        # per-frame pngs
-        import imageio
-
-        for t, fr in enumerate(vid_uint8):
-            imageio.imwrite(os.path.join(self.frames_dir, f"frame_{t:03d}.png"), fr)
-        self._event(f"{stem}.mp4 ({len(vid_uint8)} frames)", f"{stem}.mp4", f"{stem}.gif")
-        return mp4, gif
+        if gif:
+            try:
+                imageio.mimsave(gif_path, list(vid_uint8), fps=fps, loop=0)
+            except Exception:
+                pass
+        if frames:
+            for t, fr in enumerate(vid_uint8):
+                imageio.imwrite(os.path.join(self.frames_dir, f"frame_{t:03d}.png"), fr)
+        self._event(f"{stem}.mp4 ({len(vid_uint8)} frames)", f"{stem}.mp4",
+                    *([f"{stem}.gif"] if gif else []))
+        return mp4, gif_path
 
 
 # --------------------------------------------------------------------------- #
@@ -389,6 +399,43 @@ class RunDir:
 def _config_payload(cfg, task: str, **derived) -> dict:
     d = asdict(cfg) if is_dataclass(cfg) else dict(cfg)
     return {"task": task, **d, **derived}
+
+
+def entrypoint(run_cls, *, label=None, pick_gpu: bool = False,
+               capture: str = "console.log"):
+    """Wrap an entrypoint body `fn(cfg, rd)` with the full run-dir lifecycle, so the
+    three identical-everywhere boilerplate steps (create / capture_output / finish)
+    live in one place instead of being re-typed per entrypoint:
+
+      - (optional) pick a free GPU *before* any CUDA context is built
+      - create the task RunDir (auto-saving config.json) under the convention tree
+      - tee stdout+stderr into the run dir for the whole body (FD-level)
+      - seal the dir (finish) on the way out, EVEN on exception
+
+    Keeps the external `run(cfg) -> RunDir` signature; the decorated body instead
+    takes `(cfg, rd)` -- the created run dir is handed in. `label` is a str or a
+    callable cfg->str (defaults to cfg.run_label). The task subpath is derived from
+    `fn.__module__` (== `__name__` of the entrypoint module; under `python -m` that
+    is "__main__", which task_subpath_from_module resolves via __spec__ -- no stack
+    introspection)."""
+    def deco(fn):
+        @functools.wraps(fn)
+        def wrapper(cfg) -> RunDir:
+            if pick_gpu:
+                from .gpu import pick_free_gpu
+                pick_free_gpu()
+            lbl = (label(cfg) if callable(label)
+                   else label or getattr(cfg, "run_label", "") or "")
+            rd = run_cls.create(fn.__module__, lbl, getattr(cfg, "out", None),
+                                config=cfg)
+            with rd.capture_output(capture):
+                try:
+                    fn(cfg, rd)
+                finally:
+                    rd.finish()  # seal even on crash (traceback still tees to log)
+            return rd
+        return wrapper
+    return deco
 
 
 class ForwardRun(RunDir):

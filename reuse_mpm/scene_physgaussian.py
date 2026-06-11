@@ -116,7 +116,16 @@ def load_physgaussian_scene(
         sim_aabb = (sim_aabb - sim_aabb.mean(0, keepdim=True)) * 1.2 + sim_aabb.mean(0, keepdim=True)
 
         num_cluster = min(int(obj_n.shape[0] * downsample_scale), max_particles)
+        # kmeans_gpu snaps EMPTY clusters to EXACTLY [0,0,0] (see scene.load_scene);
+        # normalisation puts every real coord at >= 0.25/1.8 > 0, so exact-zero rows
+        # are unambiguously ghosts. Assert, then drop them before deriving KNN/freeze.
+        assert (obj_n.min(dim=0).values > 0).all(), \
+            "pre-kmeans particles have a coord <= 0; exact-zero ghost filter unsafe"
         sim_xyzs = downsample_with_kmeans_gpu_with_chunk(obj_n, num_cluster)
+        ghost = (sim_xyzs == 0).all(dim=1)
+        if bool(ghost.any()):
+            print(f"[scene-PG] dropped {int(ghost.sum())} k-means empty-cluster ghost(s) at origin")
+            sim_xyzs = sim_xyzs[~ghost]
 
         # KNN gauss->particle, chunked to bound memory on big scenes
         gpos = (gauss._xyz[sim_mask, :].detach().clone() + shift) / scale

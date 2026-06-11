@@ -58,6 +58,7 @@ from local_utils import (  # noqa: E402
     downsample_with_kmeans_gpu,
     downsample_with_kmeans_gpu_with_chunk,
     render_gaussian_seq_w_mask_with_disp,
+    interpolate_points_w_R,
 )
 
 __all__ = [
@@ -74,6 +75,7 @@ __all__ = [
     "downsample_with_kmeans_gpu",
     "downsample_with_kmeans_gpu_with_chunk",
     "render_gaussian_seq_w_mask_with_disp",
+    "interpolate_points_w_R",
     # warp tape / kernel helpers (for diff_sim)
     "from_torch_safe",
     "MyTape",
