@@ -34,3 +34,6 @@ tmp/
 
 # ---- Claude local settings (keep shared skills, drop machine-local) ----
 .claude/settings.local.json
+
+data-pd
+_archive
