@@ -4,6 +4,8 @@ outputs/
 # ---- Teacher training artifacts (checkpoints, samples, caches) ----
 teacher/out_image/
 teacher/out_video/
+teacher/out_*/
+teacher/flow_viz_out/
 teacher/cache/
 
 # ---- Model weights / large binaries (anywhere) ----
