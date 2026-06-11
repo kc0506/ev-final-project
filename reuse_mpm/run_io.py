@@ -31,6 +31,7 @@ choke-point. `finish()` then seals the dir: any top-level file written *outside*
 RunDir method (e.g. `np.save` / `plt.savefig` via `.path()`) is appended in
 file-mtime order, so the log is complete. `note(msg)` logs a custom line.
 """
+
 from __future__ import annotations
 
 import functools
@@ -75,7 +76,7 @@ class _FdTee:
         r, w = os.pipe()
         os.dup2(w, 1)  # fd 1 and 2 now both feed the pipe...
         os.dup2(w, 2)
-        os.close(w)    # ...so only fd 1/2 hold the write end (EOF when both restored)
+        os.close(w)  # ...so only fd 1/2 hold the write end (EOF when both restored)
         self._pump = threading.Thread(target=self._drain, args=(r,), daemon=True)
         self._pump.start()
         return self
@@ -115,7 +116,7 @@ def task_subpath_from_module(module: str, pkg: str = "reuse_mpm") -> str:
         if spec is not None:
             module = spec.name
     prefix = pkg + "."
-    name = module[len(prefix):] if module.startswith(prefix) else module
+    name = module[len(prefix) :] if module.startswith(prefix) else module
     return name.replace(".", "/")
 
 
@@ -153,8 +154,8 @@ def _git_describe(path: str) -> Optional[str]:
 
 def save_panel_video(
     out_path: str,
-    clips,                 # List[np.ndarray], each [T,H,W,C] uint8
-    labels,                # List[str]
+    clips,  # List[np.ndarray], each [T,H,W,C] uint8
+    labels,  # List[str]
     fps: int,
     ncols: Optional[int] = None,
     tile_w: int = 256,
@@ -167,8 +168,9 @@ def save_panel_video(
     border (e.g. the true E*). Clips may differ in length (clipped to the min).
     """
     import math
-    import numpy as np
+
     import imageio
+    import numpy as np
     from PIL import Image, ImageDraw
 
     n = len(clips)
@@ -188,12 +190,16 @@ def save_panel_video(
                 col = (0, 170, 0) if highlight == i else (220, 30, 30)
                 d.text((4, 2), labels[i], fill=col)
                 if highlight == i:
-                    d.rectangle([0, 0, tile_w - 1, tile_h - 1], outline=(0, 170, 0), width=3)
+                    d.rectangle(
+                        [0, 0, tile_w - 1, tile_h - 1], outline=(0, 170, 0), width=3
+                    )
                 tiles.append(np.asarray(im))
             else:
                 tiles.append(np.full((tile_h, tile_w, 3), 255, np.uint8))
-        rows = [np.concatenate(tiles[r * ncols:(r + 1) * ncols], axis=1)
-                for r in range(nrows)]
+        rows = [
+            np.concatenate(tiles[r * ncols : (r + 1) * ncols], axis=1)
+            for r in range(nrows)
+        ]
         panel = np.concatenate(rows, axis=0)
         if title:
             pim = Image.fromarray(panel)
@@ -215,8 +221,9 @@ class RunDir:
         self._logged: set = set()  # basenames already in .events.txt (for finish())
 
     @classmethod
-    def create(cls, module: str, label: str = "", out: Optional[str] = None,
-               config=None) -> "RunDir":
+    def create(
+        cls, module: str, label: str = "", out: Optional[str] = None, config=None
+    ) -> "RunDir":
         """Build a run dir following the output-tree convention (see module docstring).
 
         `module` is the entrypoint's `__name__`; the task subpath is derived from
@@ -232,6 +239,11 @@ class RunDir:
         root = out or next_run_dir(task_subpath_from_module(module), label)
         rd = cls(root)
         rd._event("created")
+
+        def _config_payload(cfg, task: str, **derived) -> dict:
+            d = asdict(cfg) if is_dataclass(cfg) else dict(cfg)
+            return {"task": task, **d, **derived}
+
         if config is not None:
             rd.write_config(_config_payload(config, task_subpath_from_module(module)))
         return rd
@@ -262,7 +274,9 @@ class RunDir:
             for e in it:
                 if e.name == ".events.txt" or e.name in self._logged:
                     continue
-                mt = e.stat(follow_symlinks=False).st_mtime  # link's own mtime, not target's
+                mt = e.stat(
+                    follow_symlinks=False
+                ).st_mtime  # link's own mtime, not target's
                 if e.is_file():  # follows symlinks: a symlink->file counts as a file
                     seal.append((mt, e.name, e.name))
                 elif e.is_dir():  # one summary per subdir, NOT per nested file
@@ -274,13 +288,16 @@ class RunDir:
         for mt, name, display in sorted(seal):
             self._logged.add(name)
             self._append(
-                f"{datetime.fromtimestamp(mt).isoformat(timespec='seconds')}  (seal) {display}")
+                f"{datetime.fromtimestamp(mt).isoformat(timespec='seconds')}  (seal) {display}"
+            )
         self._event("finished")
         # sort the whole timeline chronologically: seal lines carry real file
         # mtimes that can predate later live events (ISO ts prefix sorts by time;
         # stable sort keeps same-second insertion order, 'finished' stays last).
         p = self.path(".events.txt")
-        lines = sorted((l for l in open(p).read().splitlines() if l), key=lambda l: l[:19])
+        lines = sorted(
+            (l for l in open(p).read().splitlines() if l), key=lambda l: l[:19]
+        )
         with open(p, "w") as f:
             f.write("\n".join(lines) + "\n")
 
@@ -308,6 +325,7 @@ class RunDir:
         freeze the exact scene-discretisation cache each run actually used, since
         the shared cache is non-deterministic and gets rebuilt."""
         import shutil
+
         if src and os.path.exists(src):
             shutil.copy2(src, self.path(name))
             self._event(name, name)
@@ -360,8 +378,14 @@ class RunDir:
         self._event(f"{subdir}/ (video, {len(vid_uint8)} frames)", subdir)
         return sub.root
 
-    def save_video(self, vid_uint8: np.ndarray, fps: int, stem: str = "video",
-                   frames: bool = True, gif: bool = True):
+    def save_video(
+        self,
+        vid_uint8: np.ndarray,
+        fps: int,
+        stem: str = "video",
+        frames: bool = True,
+        gif: bool = True,
+    ):
         """vid_uint8: [T,H,W,C]. Writes mp4 (+ gif + per-frame pngs unless disabled).
 
         frames/gif default True (back-compat). Set both False for the light
@@ -381,8 +405,11 @@ class RunDir:
         if frames:
             for t, fr in enumerate(vid_uint8):
                 imageio.imwrite(os.path.join(self.frames_dir, f"frame_{t:03d}.png"), fr)
-        self._event(f"{stem}.mp4 ({len(vid_uint8)} frames)", f"{stem}.mp4",
-                    *([f"{stem}.gif"] if gif else []))
+        self._event(
+            f"{stem}.mp4 ({len(vid_uint8)} frames)",
+            f"{stem}.mp4",
+            *([f"{stem}.gif"] if gif else []),
+        )
         return mp4, gif_path
 
 
@@ -396,13 +423,11 @@ class RunDir:
 # `config()` serialises the resolved config DATACLASS verbatim, so config.json's
 # schema is identical across tasks (== the dataclass) and never hand-built.
 # --------------------------------------------------------------------------- #
-def _config_payload(cfg, task: str, **derived) -> dict:
-    d = asdict(cfg) if is_dataclass(cfg) else dict(cfg)
-    return {"task": task, **d, **derived}
 
 
-def entrypoint(run_cls, *, label=None, pick_gpu: bool = False,
-               capture: str = "console.log"):
+def entrypoint(
+    run_cls, *, label=None, pick_gpu: bool = False, capture: str = "console.log"
+):
     """Wrap an entrypoint body `fn(cfg, rd)` with the full run-dir lifecycle, so the
     three identical-everywhere boilerplate steps (create / capture_output / finish)
     live in one place instead of being re-typed per entrypoint:
@@ -418,23 +443,31 @@ def entrypoint(run_cls, *, label=None, pick_gpu: bool = False,
     `fn.__module__` (== `__name__` of the entrypoint module; under `python -m` that
     is "__main__", which task_subpath_from_module resolves via __spec__ -- no stack
     introspection)."""
+
     def deco(fn):
         @functools.wraps(fn)
         def wrapper(cfg) -> RunDir:
             if pick_gpu:
                 from .gpu import pick_free_gpu
+
                 pick_free_gpu()
-            lbl = (label(cfg) if callable(label)
-                   else label or getattr(cfg, "run_label", "") or "")
-            rd = run_cls.create(fn.__module__, lbl, getattr(cfg, "out", None),
-                                config=cfg)
+            lbl = (
+                label(cfg)
+                if callable(label)
+                else label or getattr(cfg, "run_label", "") or ""
+            )
+            rd = run_cls.create(
+                fn.__module__, lbl, getattr(cfg, "out", None), config=cfg
+            )
             with rd.capture_output(capture):
                 try:
                     fn(cfg, rd)
                 finally:
                     rd.finish()  # seal even on crash (traceback still tees to log)
             return rd
+
         return wrapper
+
     return deco
 
 
@@ -461,7 +494,9 @@ class RecoverRun(RunDir):
         T = min(gt_u8.shape[0], recovered_u8.shape[0])
         self.save_named_video(
             "gt_vs_recovered",
-            np.concatenate([gt_u8[:T], recovered_u8[:T]], axis=2), fps)
+            np.concatenate([gt_u8[:T], recovered_u8[:T]], axis=2),
+            fps,
+        )
 
     def metrics(self, **obj) -> None:
         self.write_json("metrics.json", obj)
