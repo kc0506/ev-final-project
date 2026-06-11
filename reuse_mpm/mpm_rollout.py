@@ -57,19 +57,37 @@ class MpmRollout:
         grad_window: int,
         requires_grad: bool = True,
     ) -> Tensor:
-        """Differentiable rollout from the initial state to frame `ti+1`.
+        """Differentiable rollout from the initial state to frame `ti+1`, GLOBAL E.
 
         `ti` is 0-indexed over the loss window (frame ti+1 is the target).
-        `logE` is a scalar (python float or 0-dim tensor); the per-particle E grad
-        path is used (E is broadcast to [n]), which is the validated path -- the
-        scalar/aggregating path is buggy (see README gotcha #2). Truncated BPTT:
-        only the latest `grad_window` frames' substeps carry gradient; earlier
+        `logE` is a scalar (python float or 0-dim tensor); it is broadcast to a [n]
+        per-particle vector and handed to `rollout_Evec` (the per-particle grad path
+        is the validated one -- the scalar/aggregating path is buggy, README gotcha
+        #2). Used by recover_global_E.
+        """
+        return self.rollout_Evec((10.0 ** logE) * self._onev, ti, v0, grad_window,
+                                 requires_grad=requires_grad)
+
+    def rollout_Evec(
+        self,
+        E_vec: Tensor,
+        ti: int,
+        v0: Tensor,
+        grad_window: int,
+        requires_grad: bool = True,
+    ) -> Tensor:
+        """Differentiable rollout from the initial state to frame `ti+1`, FIELD E.
+
+        `E_vec` is a [n] per-particle ABSOLUTE Young's modulus (already 10**log10E),
+        e.g. queried from an `EField` at the rest positions; gradient flows back
+        through it to the field parameters. This is the shared rollout body --
+        `rollout_to_frame` is just the broadcast-a-scalar special case. Truncated
+        BPTT: only the latest `grad_window` frames' substeps carry gradient; earlier
         substeps run detached (`extra_no_grad_steps`).
         """
         cfg = self.cfg
         extra = max(0, (ti + 1 - grad_window) * cfg.substep)  # 0 => full BPTT
         num_grad = cfg.substep * (ti + 1) - extra  # num_grad + extra == total substeps
-        E_vec = (10.0 ** logE) * self._onev
         return MPMDifferentiableSimulation.apply(
             self.solver, self.state, self.model, 0, cfg.substep_size, num_grad,
             self.init_xyzs, v0, E_vec, self.nu_t, self.density, self.density_mask,

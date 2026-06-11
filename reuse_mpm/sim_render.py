@@ -29,7 +29,6 @@ from ._env import (
     MPMModelStruct,
     MPMStateStruct,
     MPMWARPDiff,
-    apply_grid_bc_w_freeze_pts,
     render_gaussian_seq_w_mask_with_disp,
 )
 from .scene import SceneBundle
@@ -84,11 +83,58 @@ def make_constant_v0(
     return v
 
 
+def make_gradient_E(
+    scene: SceneBundle, E_base: float, axis: int, decades: float
+) -> torch.Tensor:
+    """A smooth monotonic per-particle E field for spatially-varying GT (phase B).
+
+    E[i] = E_base * 10**(decades * (frac_i - 0.5)), where frac_i in [0,1] is the
+    particle's position along `axis` over the sim aabb. So the geometric mean stays
+    ~E_base and the field spans `decades` decades of log10(E) end-to-end -- a known,
+    serialisable ground truth the field-recovery (train_field_E) must reproduce.
+
+    Returns:
+        E_vec: [n] per-particle Young's modulus.
+    """
+    pos = scene.sim_xyzs                                        # [n,3]
+    lo, hi = scene.sim_aabb[0], scene.sim_aabb[1]              # [3], [3]
+    frac = ((pos[:, axis] - lo[axis]) / (hi[axis] - lo[axis] + 1e-8)).clamp(0, 1)  # [n]
+    return E_base * torch.pow(10.0, decades * (frac - 0.5))     # [n]
+
+
+def make_gradient_v0(
+    scene: SceneBundle, base_vec: Union[Sequence[float], torch.Tensor],
+    axis: int, slope: float
+) -> torch.Tensor:
+    """A smooth per-particle v0 field for spatially-varying GT (phase B, v0 dual).
+
+    v0[i] = base_vec * (1 + slope * (frac_i - 0.5)) on moving (query) particles, 0
+    elsewhere, where frac_i in [0,1] is the particle's position along `axis` over the
+    sim aabb. Direction is fixed (base_vec); only the magnitude ramps linearly along
+    `axis`, spanning base*(1-slope/2)..base*(1+slope/2) end-to-end. The mean over the
+    axis stays ~base_vec, so a UNIFORM v0 recovers the mean but misses the spatial
+    ramp -- a field must reproduce it. A known, serialisable ground truth.
+
+    Returns:
+        v0: [n,3] per-particle initial velocity (0 on non-query particles).
+    """
+    device = scene.device
+    n = scene.sim_xyzs.shape[0]
+    base = torch.as_tensor(base_vec, dtype=torch.float32, device=device)  # [3]
+    pos = scene.sim_xyzs                                        # [n,3]
+    lo, hi = scene.sim_aabb[0], scene.sim_aabb[1]              # [3], [3]
+    frac = ((pos[:, axis] - lo[axis]) / (hi[axis] - lo[axis] + 1e-8)).clamp(0, 1)  # [n]
+    scale = (1.0 + slope * (frac - 0.5))                       # [n]
+    v = scale[:, None] * base[None, :]                         # [n,3]
+    v = v * scene.query_mask[:, None].to(v.dtype)             # zero non-query
+    return v
+
+
 def build_mpm(
     scene: SceneBundle, cfg: SimConfig, requires_grad: bool = False
 ) -> Tuple[MPMWARPDiff, MPMStateStruct, MPMModelStruct]:
     """Construct (solver, state, model) for a scene: material params, volume and
-    freeze BC set, but E / v0 / rollout NOT applied.
+    particle-level freeze set, but E / v0 / rollout NOT applied.
 
     Shared by forward-gen (no_grad) and the differentiable training path, so the
     physics setup is identical in both.
@@ -123,8 +169,27 @@ def build_mpm(
             "grid_v_damping_scale": cfg.grid_v_damping_scale,
         },
     )
-    freeze_pts = sim_xyzs[scene.freeze_mask, :]
-    apply_grid_bc_w_freeze_pts(cfg.grid_size, 1.0, freeze_pts, solver)
+    # Freeze anchor particles via a grid BC that zeroes each frozen particle's FULL
+    # 27-node G2P stencil. PhysDreamer's apply_grid_bc_w_freeze_pts marks only the
+    # single floor node floor(pos*inv_dx) per frozen pt, but g2p gathers velocity
+    # from a 27-node quadratic B-spline stencil (base = int(pos*inv_dx - 0.5), i,j,k
+    # in 0..2); the un-marked neighbour nodes carry the moving material's velocity,
+    # so anchor particles leaked ~30% of free motion (telephone). Marking every
+    # stencil node a frozen particle reads makes its gathered velocity exactly 0 ->
+    # it stays put. (particle_selection is unusable here: the partial_clone rollout
+    # does not carry a skipped particle's x to the next state.) See explore/freeze_probe.
+    G = cfg.grid_size
+    inv_dx = G / cfg.grid_lim
+    base = (sim_xyzs[scene.freeze_mask, :] * inv_dx - 0.5).to(torch.int64)  # [F,3]
+    freeze_grid = torch.zeros((G, G, G), dtype=torch.int32, device=device)
+    for di in range(3):
+        for dj in range(3):
+            for dk in range(3):
+                ix = (base[:, 0] + di).clamp(0, G - 1)
+                iy = (base[:, 1] + dj).clamp(0, G - 1)
+                iz = (base[:, 2] + dk).clamp(0, G - 1)
+                freeze_grid[ix, iy, iz] = 1
+    solver.enforce_grid_velocity_by_mask(freeze_grid)
     return solver, state, model
 
 
@@ -215,6 +280,36 @@ def render_positions(
     return vid
 
 
+def render_positions_multicam(
+    scene: SceneBundle,
+    pos_list: List[torch.Tensor],
+    cams: List[Camera],
+) -> torch.Tensor:
+    """Render a position sequence with a PER-FRAME camera (dynamic / moving cam).
+
+    Same as render_positions but the viewpoint changes each frame: cams[t] renders
+    pos_list[t]. Enables a moving camera within one clip (orbit/dolly), which the
+    underlying render already supports (it takes a per-frame cam list). The
+    displacement field is still computed vs the rest pose pos_list[0].
+
+    Args:
+        pos_list: T x [n, 3] world particle positions.
+        cams:     T cameras, one per frame (len must equal len(pos_list)).
+    Returns:
+        video tensor [T, C, H, W] in [0, 1].
+    """
+    assert len(cams) == len(pos_list), f"{len(cams)} cams != {len(pos_list)} frames"
+    device = scene.device
+    init_pos = pos_list[0]
+    pos_diff_list = [p - init_pos for p in pos_list]
+    bg = torch.tensor([1.0, 1.0, 1.0], dtype=torch.float32, device=device)
+    rp = _RenderParams(scene.gaussians, bg)
+    vid = render_gaussian_seq_w_mask_with_disp(
+        cams, rp, init_pos, scene.top_k_index, pos_diff_list, scene.sim_mask
+    )
+    return vid
+
+
 def render_disp_frame(
     scene: SceneBundle,
     particle_pos_normalised: torch.Tensor,
@@ -233,6 +328,19 @@ def render_disp_frame(
     disp = world_pos - undeformed
     bg = torch.tensor([1.0, 1.0, 1.0], dtype=torch.float32, device=device)
     rp = _RenderParams(scene.gaussians, bg)
+    # [note] this render all gs in `render_params.gaussians`, including non MPM particles.
+    # Recap: four types of particles:
+    # a. ~clean = ~simulated = background. 
+    #    Do not participate MPM (both rollout & interpolate)
+    # b. clean. 
+    #    Do not participate MPM rollout, but displaced by interpolation.
+    # c. knn centers & freeze_mask.
+    #    Participate MPM rollout, but fixed by BC.
+    # d. knn centers & ~freeze_mask.
+    #    The only particle that can be moved in MPM
+    # 
+    # To be clear, `a+b` = all 3dgs. c, d are "virtual" particles participating MPM, but themselves do not have appearance.
+
     vid = render_gaussian_seq_w_mask_with_disp(
         cam, rp, undeformed, scene.top_k_index, [disp], scene.sim_mask
     )
@@ -254,6 +362,63 @@ def simulate_and_render(
     """
     pos_list = simulate_positions(scene, E, v0, cfg, requires_grad=requires_grad)
     return render_positions(scene, pos_list, cam)
+
+
+def render_static_subset(
+    scene: SceneBundle, cam: Camera, keep_gauss_mask: torch.Tensor
+) -> np.ndarray:
+    """Render the REST-POSE scene using only `keep_gauss_mask` gaussians (the rest
+    made transparent), to see a subset in isolation -- e.g. ~sim_mask = the static
+    background (incl. any "wall") that MPM never simulates.
+
+    Args:
+        keep_gauss_mask: [N_gauss] bool -- gaussians to keep visible.
+    Returns:
+        [H, W, C] uint8 single frame.
+    """
+    g = scene.gaussians
+    old_op = g._opacity.clone()                                  # [N_gauss, 1]
+    try:
+        with torch.no_grad():
+            g._opacity[~keep_gauss_mask] = -1e4                  # sigmoid(-1e4) ~ 0 -> invisible
+            pos0 = (scene.sim_xyzs * scene.scale - scene.shift).detach()  # [n, 3] world
+            vid = render_positions(scene, [pos0], cam)           # [1, C, H, W]
+        return video_to_uint8(vid)[0]                            # [H, W, C] uint8
+    finally:
+        g._opacity = old_op
+
+
+def render_positions_recolor(
+    scene: SceneBundle, pos_list: List[torch.Tensor], cam: Camera,
+    red_gauss_mask: torch.Tensor,
+) -> torch.Tensor:
+    """render_positions, but with `red_gauss_mask` gaussians forced to opaque,
+    view-independent RED -- overlays a gaussian-level mask onto the moving render
+    (e.g. 'all-KNN-freeze' gaussians, to SEE the fully-anchored region in the gif).
+
+    Args:
+        pos_list:       T x [n, 3] world particle positions (the motion to render).
+        red_gauss_mask: [N_gauss] bool -- gaussians to paint red.
+    Returns:
+        [T, C, H, W] in [0,1].
+    """
+    g = scene.gaussians
+    sh_c0 = 0.28209479177387814                                  # SH band-0 constant
+    old_dc = g._features_dc.clone()                              # [N_gauss, 1, 3]
+    old_rest = g._features_rest.clone()                          # [N_gauss, R, 3]
+    try:
+        with torch.no_grad():
+            dev, dt = g._features_dc.device, g._features_dc.dtype
+            # rendered colour ~ sh_c0 * dc + 0.5; solve for rgb=(1,0,0)
+            red_dc = torch.tensor([0.5 / sh_c0, -0.5 / sh_c0, -0.5 / sh_c0],
+                                  device=dev, dtype=dt)           # [3]
+            g._features_dc[red_gauss_mask] = red_dc.view(1, 1, 3)
+            g._features_rest[red_gauss_mask] = 0.0                # kill view-dependence
+            vid = render_positions(scene, pos_list, cam)         # [T, C, H, W]
+        return vid
+    finally:
+        g._features_dc = old_dc
+        g._features_rest = old_rest
 
 
 def video_to_uint8(vid: torch.Tensor) -> np.ndarray:
