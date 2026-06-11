@@ -25,6 +25,8 @@ try:  # py3.8+: Literal in typing
 except ImportError:  # pragma: no cover
     from typing_extensions import Literal
 
+from .sampling import CameraDist, EDist, TDist, V0Dist
+
 
 # --------------------------------------------------------------------------- #
 # Scene presets: name -> (kind, path), resolved against env-overridable roots.
@@ -124,7 +126,10 @@ class SceneSpec:
     device: str = "cuda:0"
     # explicit cache path; default = derived from (path, downsample_scale, grid_size, top_k)
     cache_path: Optional[str] = None
-    # pg-only geometric anchor BC
+    # anchor BC. pd default "moving" (far-from-moving_part_points); "slab" = robust
+    # geometric bottom-slab (pg always uses slab). freeze_frac/freeze_axis param the
+    # slab (axis None => longest axis).
+    freeze_mode: str = "moving"
     freeze_frac: float = 0.15
     freeze_axis: Optional[int] = None
 
@@ -166,27 +171,59 @@ class ForwardConfig:
     """forward_gen: known constant E -> one video."""
 
     scene: SceneSpec
-    E: float  # constant Young's modulus (required)
+    E: float  # constant Young's modulus, OR the base/geomean E when a gradient is set
     sim: SimConfig = field(default_factory=SimConfig)
     v0: Tuple[float, float, float] = (0.0, -0.5, 0.0)
     frame: str = "frame_00001.png"  # camera image filename
+    # Optional spatially-varying GT (phase B): when E_grad_axis is set, E becomes a
+    # smooth gradient along that axis spanning E_grad_decades decades of log10(E)
+    # (geomean still == E). The per-particle GT field is saved to E_field.npy so the
+    # field-recovery can score per-particle reconstruction. None => uniform E.
+    E_grad_axis: Optional[int] = None
+    E_grad_decades: float = 1.0
+    # Optional spatially-varying GT v0 (phase B, v0 dual): when v0_grad_axis is set,
+    # v0 magnitude ramps linearly along that axis (slope v0_grad_slope), direction
+    # fixed to `v0`; the mean stays `v0`. The per-particle GT field is saved to
+    # v0_field.npy so train_v0 can score per-particle reconstruction. None => uniform.
+    v0_grad_axis: Optional[int] = None
+    v0_grad_slope: float = 1.0
     out: Optional[str] = None
     run_label: str = ""
 
 
 @dataclass
 class DatasetConfig:
-    """dataset_gen: sample E~p*(E)=logU[E_min,E_max] -> (E, video) dataset."""
+    """dataset_gen: sample Y=(E,v0,T)~p*(Y) -> (Y, video) dataset.
+
+    Each conditioning axis is an INDEPENDENT 1-D distribution (sampling.EDist /
+    V0Dist / TDist); the realised dataset's marginals ARE these specs (recorded +
+    plotted in the manifest). Defaults reproduce the v1 behaviour -- E
+    log-uniform[1e4,1e6], v0 fixed (0,-1,0), T = sim.num_frames -- so the old
+    E-only sweep is just e_dist=loguniform with v0_dist/t_dist=fixed.
+
+    The four uniform-v0 datasets (E fixed, v0 varies, T fixed):
+      a = v0_dist{axis,  mag_min 0}    b = v0_dist{axis,  mag_min>0}
+      c = v0_dist{sphere,mag_min 0}    d = v0_dist{sphere,mag_min>0}
+    """
 
     scene: SceneSpec
-    sim: SimConfig = field(default_factory=lambda: SimConfig(num_frames=8, substep=32))
-    E_min: float = 1e4
-    E_max: float = 1e6
+    sim: SimConfig = field(default_factory=lambda: SimConfig(num_frames=16, substep=64))
+    e_dist: EDist = field(default_factory=EDist)
+    v0_dist: V0Dist = field(default_factory=V0Dist)
+    t_dist: TDist = field(default_factory=TDist)
+    cam_dist: CameraDist = field(default_factory=CameraDist)  # default fixed = v1 view
     n: int = 16
-    v0: Tuple[float, float, float] = (0.0, -1.0, 0.0)
     frame: str = "frame_00001.png"
     seed: int = 0
     jump_thresh: float = 0.5  # per-frame max normalised single-step jump -> unstable flag
+    # per-sample IO: light_io True => skip per-frame pngs (redundant with mp4);
+    # mp4 + gif still written. Per-frame plys are reconstructable from
+    # mpm_xyz.npy on demand (regen_ply); the dataset "glance" is panel.gif.
+    light_io: bool = True
+    panel_max: int = 16  # max clips tiled into panel.gif (evenly spaced if n>this)
+    # one-line human note on what this dataset is for (-> manifest + README.md).
+    # If empty, an auto summary of the (E,v0,T) specs is used.
+    description: str = ""
     out: Optional[str] = None
     run_label: str = ""
 
@@ -207,5 +244,77 @@ class RecoverConfig:
     grad_window: int = 1  # frames keeping BPTT grad (truncated BPTT)
     coarse_init: bool = False
     coarse_n: int = 9
+    out: Optional[str] = None
+    run_label: str = ""
+
+
+@dataclass
+class RecoverFieldConfig:
+    """train_field_E: recover a spatially-varying E FIELD from a forward_gen run.
+
+    Same GT contract as RecoverConfig (scene+sim+v0+frame read from the GT run),
+    but optimises an EField (voxel|triplane) instead of a global scalar -- the
+    over-parameterised-landscape variant. Predicts ABSOLUTE log10(E); `init_E` is
+    only the field initialisation (uniform start matching the scalar baseline).
+    """
+
+    gt_run: str
+    backbone: Literal["voxel", "triplane"] = "voxel"
+    init_E: float = 3e5
+    res: int = 16          # grid / plane resolution
+    feat_dim: int = 16     # triplane per-plane feature channels
+    mlp_hidden: int = 64   # triplane decoder width
+    reg_weight: float = 1e-3  # smoothness (TV) weight; 0 disables
+    iters: int = 80
+    lr: float = 0.05
+    # window=1 is the VALIDATED default: with truncated BPTT, window>1 rolls deep
+    # target frames from a detached prefix whose render gradient sign-flips and
+    # overwhelms the correct frame-1 term (see mpm-diff-gotchas #4 / explore.gradcheck).
+    window: int = 1
+    grad_window: int = 1
+    out: Optional[str] = None
+    run_label: str = ""
+
+
+@dataclass
+class RecoverV0Config:
+    """train_v0: recover an initial-velocity FIELD v0 from a forward_gen run, with E
+    held KNOWN (the dual of RecoverConfig, which assumed v0 known and fit E).
+
+    Same GT contract: scene + sim + E + v0(GT) + frame are read from the GT run's
+    config.json. `kind` selects the v0 parametrisation (global 3-vector | voxel |
+    triplane), like EField's backbone. Gravity is off, so v0 drives all motion and a
+    SHORT window of full-BPTT frames carries the v0 gradient (see recover_v0).
+    """
+
+    gt_run: str
+    kind: Literal["global", "voxel", "triplane"] = "triplane"
+    res: int = 16          # grid / plane resolution (voxel|triplane)
+    feat_dim: int = 16     # triplane per-plane feature channels
+    mlp_hidden: int = 64   # triplane decoder width
+    v_clamp: float = 5.0   # per-component |v0| clamp (CFL/blow-up guard)
+    vel_scale: float = 1.0    # field output ×this (PhysDreamer uses 0.1)
+    reg_weight: float = 0.0   # TV smoothness weight; 0 disables (no-op for "global")
+    grad_clip: float = 10.0   # max grad-norm on field params (PhysDreamer-style loose)
+    weight_decay: float = 0.0  # AdamW weight decay (PhysDreamer uses 1e-4)
+    # window_start: if >0, the loss window GROWS window_start->window over training
+    # (PhysDreamer curriculum: the spatial field is identified from accumulated multi-
+    # frame motion). 0 => fixed `window`.
+    window_start: int = 0
+    # two_stage (non-global only): first solve the MEAN v0 with a robust global
+    # stage, then init the field AT that solution and refine. The pixel gradient only
+    # behaves near the basin (mpm-grad-stability), and a from-scratch field either
+    # blows up (triplane) or undershoots (voxel); good-init keeps it in the basin.
+    two_stage: bool = True
+    stage1_iters: int = 60
+    stage1_lr: float = 0.05
+    iters: int = 120
+    lr: float = 0.05
+    # window=1 is the VALIDATED default: each frame is rolled with FULL BPTT
+    # (grad_window=ti+1) so v0 gets gradient. window>=2 pulls in the frame-2+ long-
+    # horizon MPM gradient, which is biased/unstable (drifts v0 to a wrong basin at
+    # HIGHER loss); window=1 (frame-1, 64 substeps) descends cleanly to GT
+    # (06_tele: l2_err 0.006, angle 0.4deg). With gravity off, frame 1 is pure-v0.
+    window: int = 1
     out: Optional[str] = None
     run_label: str = ""
