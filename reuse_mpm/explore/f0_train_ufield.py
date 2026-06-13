@@ -63,9 +63,9 @@ def run(cfg: UFieldConfig) -> str:
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    from matplotlib.animation import FuncAnimation, PillowWriter
 
     from ._block import Scene
+    from . import _viz
 
     t0 = _time.time()
     out_dir = os.path.join("outputs", "explore", "f0_train_ufield", cfg.label)
@@ -158,28 +158,9 @@ def run(cfg: UFieldConfig) -> str:
 
     # overlay GT vs fit rollout
     x0f, F0f = x0_F0(th); fit_traj = sc.rollout_F0(x0f, F0f, cfg.gt_logE, cfg.K)
-    items = [("GT", gt_traj.cpu().numpy(), "black"), ("fit", fit_traj.cpu().numpy(), "tab:orange")]
-    allp = np.concatenate([it[1].reshape(-1, 3) for it in items], 0); mn, mx = allp.min(0), allp.max(0)
-    Lr = items[0][1].shape[0]; proj = [(0, 1, "x", "y"), (0, 2, "x", "z"), (1, 2, "y", "z")]
-    fig = plt.figure(figsize=(11, 9)); ax3d = fig.add_subplot(2, 2, 1, projection="3d")
-    ax2 = [fig.add_subplot(2, 2, k) for k in (2, 3, 4)]
-
-    def draw(f):
-        ax3d.cla()
-        for lbl, Xt, col in items:
-            ax3d.scatter(Xt[f][:, 0], Xt[f][:, 1], Xt[f][:, 2], c=col, s=3, alpha=0.4, label=lbl, depthshade=False)
-        ax3d.set_xlim(mn[0], mx[0]); ax3d.set_ylim(mn[1], mx[1]); ax3d.set_zlim(mn[2], mx[2])
-        ax3d.set_title(f"release frame {f}/{Lr-1}", fontsize=9); ax3d.legend(fontsize=8, loc="upper left")
-        for axp, (a, b, la, lb) in zip(ax2, proj):
-            axp.cla()
-            for lbl, Xt, col in items:
-                axp.scatter(Xt[f][:, a], Xt[f][:, b], c=col, s=4, alpha=0.4)
-            axp.set_xlim(mn[a], mx[a]); axp.set_ylim(mn[b], mx[b]); axp.set_aspect("equal")
-            axp.set_xlabel(la); axp.set_ylabel(lb); axp.set_title(f"{la}{lb}")
-        return ()
-
-    draw(0); anim = FuncAnimation(fig, draw, frames=Lr, blit=False)
-    anim.save(os.path.join(out_dir, "result_overlay.gif"), writer=PillowWriter(fps=cfg.overlay_fps)); plt.close(fig)
+    items = [("GT", "black", gt_traj.cpu().numpy()), ("fit", "tab:orange", fit_traj.cpu().numpy())]
+    _viz.triplane_overlay_gif(os.path.join(out_dir, "result_overlay.gif"), items,
+                              fps=cfg.overlay_fps, title="ufield")
     print(f"[ufield] -> {out_dir} ({_time.time()-t0:.1f}s)")
     return out_dir
 

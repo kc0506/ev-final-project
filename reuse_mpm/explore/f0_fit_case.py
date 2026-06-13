@@ -90,6 +90,7 @@ def run(cfg: FitCaseConfig) -> str:
     import matplotlib.pyplot as plt
 
     from ._block import Scene, SCENES
+    from . import _viz
 
     t0 = _time.time()
     assert cfg.scene in SCENES, f"unknown scene {cfg.scene!r} (have {list(SCENES)})"
@@ -127,44 +128,19 @@ def run(cfg: FitCaseConfig) -> str:
              minz=minz, comz=comz, rel_start=rel0, maxdev=maxdev, scene=cfg.scene,
              floor_z=floor_z if sc.has_floor else -1)
 
-    vmax = float(np.quantile(fullS, 0.98)) or 1e-3
-    mn = fullX[:, :, [0, 2]].reshape(-1, 2).min(0); mx = fullX[:, :, [0, 2]].reshape(-1, 2).max(0)
+    _floor = floor_z if sc.has_floor else None
     rel_idx = list(range(rel0, len(fullX), max(1, (len(fullX) - rel0) // 7)))[:8]
     sel = (list(range(rel0)) + rel_idx)[:12]
-    ncol = 6; nrow = (len(sel) + ncol - 1) // ncol
-    fig, axs = plt.subplots(nrow, ncol, figsize=(3.0 * ncol, 3.0 * nrow), squeeze=False)
-    for ax in axs.flat:
-        ax.axis("off")
-    for a, f in enumerate(sel):
-        ax = axs.flat[a]; ax.axis("on")
-        psc = ax.scatter(fullX[f][:, 0], fullX[f][:, 2], c=fullS[f], s=6, cmap="inferno", vmin=0, vmax=vmax)
-        if sc.has_floor:
-            ax.axhline(floor_z, color="cyan", ls="-", lw=1)
-        ax.set_xlim(mn[0], mx[0]); ax.set_ylim(mn[1], mx[1]); ax.set_aspect("equal")
-        ax.set_title(f"f{f} [{'PULL' if f < rel0 else 'REL'}] w={width[f]:.3f}", fontsize=9)
-    fig.colorbar(psc, ax=axs, shrink=0.6, label="stretch |sigma-1|")
-    fig.suptitle(f"{cfg.scene}: pull->release (maxdev {maxdev:.3f}, GT logE {cfg.gt_logE})", fontsize=13)
-    fig.savefig(os.path.join(out_dir, "forward_panel.png"), dpi=110); plt.close(fig)
-
-    fig, ax = plt.subplots(figsize=(7.5, 4.2))
-    ax.plot(width, "-o", ms=3, label="width (x-extent)")
+    _viz.frames_panel(os.path.join(out_dir, "forward_panel.png"), fullX, fullS, sel=sel,
+                      rel_start=rel0, floor_z=_floor, width=width,
+                      suptitle=f"{cfg.scene}: pull->release (maxdev {maxdev:.3f}, GT logE {cfg.gt_logE})")
+    obs = {"width (x-extent)": width}
     if cfg.scene != "release":
-        ax.plot(minz, "-s", ms=3, label="min z (bottom)")
-        ax.plot(comz, "-^", ms=3, label="com z")
-    if sc.has_floor:
-        ax.axhline(floor_z, color="cyan", ls="-", lw=1, label=f"floor {floor_z}")
-    ax.axvline(rel0 - 1, color="orange", ls="--", label=f"release (f{rel0-1})")
-    ax.set_xlabel("frame"); ax.set_ylabel("value")
-    ax.set_title(f"{cfg.scene} observables (maxdev {maxdev:.3f})"); ax.legend(fontsize=8)
-    fig.tight_layout(); fig.savefig(os.path.join(out_dir, "observables.png"), dpi=120); plt.close(fig)
-
-    fig, ax = plt.subplots(figsize=(6.5, 4))
-    snap = fullX[rel0 - 1]
-    psc = ax.scatter(snap[:, 0], snap[:, 2], c=F0_stretch, s=10, cmap="viridis")
-    ax.set_aspect("equal"); ax.set_xlabel("x"); ax.set_ylabel("z")
-    ax.set_title(f"F0 snapshot stretch (mean {F0_stretch.mean():.3f}, max {F0_stretch.max():.3f})")
-    fig.colorbar(psc, ax=ax, label="|sigma-1|")
-    fig.tight_layout(); fig.savefig(os.path.join(out_dir, "F0_stretch.png"), dpi=120); plt.close(fig)
+        obs["min z (bottom)"] = minz; obs["com z"] = comz
+    _viz.observables_plot(os.path.join(out_dir, "observables.png"), obs, rel_start=rel0,
+                          floor_z=_floor, suptitle=f"{cfg.scene} observables (maxdev {maxdev:.3f})")
+    _viz.scalar_scatter(os.path.join(out_dir, "F0_stretch.png"), fullX[rel0 - 1], F0_stretch,
+                        title=f"F0 snapshot stretch (mean {F0_stretch.mean():.3f}, max {F0_stretch.max():.3f})")
     print(f"[case] forward viz -> forward_panel.png, observables.png, F0_stretch.png")
 
     # ---- result overlay (FIXTURE): GT vs each converged-E rollout (3d + triplane) ----
@@ -175,55 +151,17 @@ def run(cfg: FitCaseConfig) -> str:
         ckpt_p = os.path.join(out_dir, "fit_result.json")
         if not (cfg.overlay_results and os.path.exists(ckpt_p)):
             return
-        from matplotlib.animation import FuncAnimation, PillowWriter
         fr = json.load(open(ckpt_p))["results"]
         palette = ["tab:blue", "tab:orange", "tab:green", "tab:red"]
-        items = [("GT", cfg.gt_logE, "black", gt_xyz.cpu().numpy())]
+        # _viz items are (label, color, X[T,n,3])
+        items = [("GT", "black", gt_xyz.cpu().numpy())]
         for i, (k, r) in enumerate(sorted(fr.items())):
-            items.append((f"{k}->{r['final']:.2f}", r["final"], palette[i % len(palette)],
+            items.append((f"{k}->{r['final']:.2f}", palette[i % len(palette)],
                           rollout(r["final"])[0].cpu().numpy()))
-        allp = np.concatenate([it[3].reshape(-1, 3) for it in items], 0)
-        mn3, mx3 = allp.min(0), allp.max(0); Lr = items[0][3].shape[0]
-        proj = [(0, 1, "x", "y"), (0, 2, "x", "z"), (1, 2, "y", "z")]
-        fig = plt.figure(figsize=(11, 9))
-        ax3d = fig.add_subplot(2, 2, 1, projection="3d"); ax2 = [fig.add_subplot(2, 2, k) for k in (2, 3, 4)]
-
-        def draw(f):
-            ax3d.cla()
-            for lbl, le, c, X in items:
-                ax3d.scatter(X[f][:, 0], X[f][:, 1], X[f][:, 2], c=c, s=3, alpha=0.4, label=lbl, depthshade=False)
-            ax3d.set_xlim(mn3[0], mx3[0]); ax3d.set_ylim(mn3[1], mx3[1]); ax3d.set_zlim(mn3[2], mx3[2])
-            ax3d.set_title(f"{cfg.scene} release frame {f}/{Lr-1}", fontsize=9); ax3d.legend(fontsize=7, loc="upper left")
-            for axp, (a, b, la, lb) in zip(ax2, proj):
-                axp.cla()
-                for lbl, le, c, X in items:
-                    axp.scatter(X[f][:, a], X[f][:, b], c=c, s=4, alpha=0.4)
-                if sc.has_floor and (a, b) == (0, 2):
-                    axp.axhline(floor_z, color="cyan", lw=1)
-                axp.set_xlim(mn3[a], mx3[a]); axp.set_ylim(mn3[b], mx3[b]); axp.set_aspect("equal")
-                axp.set_xlabel(la); axp.set_ylabel(lb); axp.set_title(f"{la}{lb}")
-            return ()
-
-        draw(0)
-        anim = FuncAnimation(fig, draw, frames=Lr, blit=False)
-        anim.save(os.path.join(out_dir, "result_overlay.gif"), writer=PillowWriter(fps=cfg.overlay_fps)); plt.close(fig)
-        sel = list(range(0, Lr, max(1, Lr // 8)))[:9]
-        ncol = 3; nrow = (len(sel) + ncol - 1) // ncol
-        fig, axs = plt.subplots(nrow, ncol, figsize=(4.2 * ncol, 3.6 * nrow), squeeze=False)
-        for ax in axs.flat:
-            ax.axis("off")
-        for a, f in enumerate(sel):
-            ax = axs.flat[a]; ax.axis("on")
-            for lbl, le, c, X in items:
-                ax.scatter(X[f][:, 0], X[f][:, 2], c=c, s=5, alpha=0.45, label=lbl if a == 0 else None)
-            if sc.has_floor:
-                ax.axhline(floor_z, color="cyan", lw=1)
-            ax.set_xlim(mn3[0], mx3[0]); ax.set_ylim(mn3[2], mx3[2]); ax.set_aspect("equal")
-            ax.set_title(f"frame {f}", fontsize=9)
-            if a == 0:
-                ax.legend(fontsize=7)
-        fig.suptitle(f"{cfg.scene}: GT vs converged-E rollouts (xz side view)", fontsize=13)
-        fig.tight_layout(); fig.savefig(os.path.join(out_dir, "result_overlay_panel.png"), dpi=110); plt.close(fig)
+        _viz.triplane_overlay_gif(os.path.join(out_dir, "result_overlay.gif"), items,
+                                  floor_z=_floor, fps=cfg.overlay_fps, title=f"{cfg.scene} release")
+        _viz.overlay_panel(os.path.join(out_dir, "result_overlay_panel.png"), items, floor_z=_floor,
+                           suptitle=f"{cfg.scene}: GT vs converged-E rollouts (xz side view)")
         print(f"[case] result overlay -> result_overlay.gif, result_overlay_panel.png  ({[it[0] for it in items]})")
 
     if not cfg.fit:
