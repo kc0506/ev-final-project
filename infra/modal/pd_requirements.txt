@@ -1,0 +1,15 @@
+# reuse_mpm declared deps = repo environment.yml pip list (the hand-maintained source
+# of truth), NOT the physdreamer conda env's `pip freeze` -- that env is shared/polluted
+# (jaxtyping/wandb/nerfstudio/accelerate/dash/... unrelated to reuse_mpm, and internally
+# conflicting: jaxtyping 0.2.28 pins typeguard==2.13.3 vs freeze's 4.5.2).
+# torch/torchvision (cu118 index) and warp-lang are installed in separate layers.
+numpy==1.24.1
+diffusers==0.31.0
+tyro
+imageio
+matplotlib
+mediapy
+pillow
+plyfile
+point-cloud-utils
+tqdm
