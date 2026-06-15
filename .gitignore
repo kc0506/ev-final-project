@@ -39,3 +39,14 @@ tmp/
 
 data-pd
 _archive
+
+/PhysDreamer
+/gic_spectral
+
+# ---- vsd score-distillation subproject: keep source, drop 120MB out/ ----
+vsd/out/
+
+# ---- reference material / scratch (not our work) ----
+/Resonance4D.pdf
+/fable5-conversation.txt
+poster/How to design an academic poster.pdf
