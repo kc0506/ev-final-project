@@ -1,0 +1,38 @@
+# Abstract spec — hand-maintained, only the top-level deps we declare (like pyproject).
+# NOT a lock: transitive versions are the resolver's job. Pin only the fragile ones
+# (cu118 torch stack, warp, numpy<2). physdreamer + local_utils are sys.path imports
+# wired up in reuse_mpm/_env.py, so they are intentionally NOT listed here.
+#
+# CHANNEL ORDER MATTERS: nvidia/label/cuda-11.8.0 MUST come before conda-forge.
+# conda-forge's cuda-* packages start at 12.0, so if conda-forge is ranked first the
+# resolver pulls a 12.9 toolkit (nvcc 12.9) to satisfy cuda-toolkit=11.8's deps — which
+# then fails torch's cpp_extension version check (torch is cu118) when building the
+# gaussian-splatting CUDA extensions (simple_knn, diff_gaussian_rasterization). With the
+# nvidia channel first, the whole 11.8 toolkit comes from there and everything else falls
+# through to conda-forge. (warp does NOT need this — it ships its own bundled CUDA 11.5.)
+#
+# Add a dep: edit this file, then `just env-update`.
+name: physdreamer
+channels:
+  - nvidia/label/cuda-11.8.0
+  - conda-forge
+dependencies:
+  - python=3.9
+  - cuda-toolkit=11.8      # nvcc 11.8 — builds the torch-cu118 CUDA extensions (simple_knn etc.)
+  - gxx_linux-64=11.4      # host compiler for those kernels
+  - pip
+  - pip:
+      - --extra-index-url https://download.pytorch.org/whl/cu118
+      - torch==2.0.0+cu118
+      - torchvision==0.15.1+cu118
+      - warp-lang==0.10.1
+      - numpy==1.24.1
+      - diffusers==0.31.0
+      - tyro
+      - imageio
+      - matplotlib
+      - mediapy
+      - pillow
+      - plyfile
+      - point-cloud-utils
+      - tqdm
