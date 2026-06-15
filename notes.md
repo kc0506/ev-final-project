@@ -80,10 +80,4 @@
 
 ---
 
-- vel  = 4
-- img  = 8
-- traj = 14
 
-
-
-c to f; early frames

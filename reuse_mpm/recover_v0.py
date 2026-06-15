@@ -15,11 +15,14 @@ loss / per-frame-backward / render machinery is identical, with one CRITICAL cha
 """
 from __future__ import annotations
 
-from typing import Optional, Sequence
+from typing import TYPE_CHECKING, Optional, Sequence
 
 import numpy as np
 import torch
 import torch.nn.functional as F
+
+if TYPE_CHECKING:  # annotation only; matplotlib stays lazy inside the plot helpers
+    from matplotlib.figure import Figure
 
 from .config import SimConfig
 from .mpm_rollout import MpmRollout
@@ -153,16 +156,17 @@ def recover_v0(
     return out
 
 
-def plot_v0_recovery(path: str, result: dict, title: str = "") -> None:
+def plot_v0_recovery(result: dict, title: str = "") -> Optional[Figure]:
     """Three panels: loss vs iter (THE objective) + recovered v0 components vs iter
-    (with GT dashed lines if known) + final per-particle |v0| histogram."""
+    (with GT dashed lines if known) + final per-particle |v0| histogram. Returns the
+    Figure (RunDir owns where it lands)."""
     try:
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
     except Exception as e:
         print(f"[recover_v0] plot skipped: {e}")
-        return
+        return None
     fig, ax = plt.subplots(1, 3, figsize=(15, 4))
     ax[0].plot(result["loss_traj"], "o-", ms=3)
     ax[0].set_yscale("log"); ax[0].set_xlabel("iter"); ax[0].set_ylabel("photometric loss")
@@ -191,8 +195,7 @@ def plot_v0_recovery(path: str, result: dict, title: str = "") -> None:
     if title:
         fig.suptitle(title)
     fig.tight_layout()
-    fig.savefig(path, dpi=120)
-    plt.close(fig)
+    return fig
 
 
 def v0_field_vs_gt_metrics(v0_final: np.ndarray, v0_gt: np.ndarray,
@@ -218,9 +221,9 @@ def v0_field_vs_gt_metrics(v0_final: np.ndarray, v0_gt: np.ndarray,
             "v0_per_comp_corr": corrs}
 
 
-def plot_v0_field_vs_gt(path: str, sim_xyzs: np.ndarray, v0_final: np.ndarray,
+def plot_v0_field_vs_gt(sim_xyzs: np.ndarray, v0_final: np.ndarray,
                         v0_gt: np.ndarray, query_mask: np.ndarray,
-                        title: str = "") -> None:
+                        title: str = "") -> Optional[Figure]:
     """GT vs recovered v0 field: per-component scatter (recovered vs GT, ideal=diag)
     plus the dominant component coloured spatially side-by-side (shared scale)."""
     try:
@@ -229,7 +232,7 @@ def plot_v0_field_vs_gt(path: str, sim_xyzs: np.ndarray, v0_final: np.ndarray,
         import matplotlib.pyplot as plt
     except Exception as e:
         print(f"[recover_v0] field-vs-gt plot skipped: {e}")
-        return
+        return None
     m = query_mask.astype(bool)
     f, g = v0_final[m], v0_gt[m]                                # [k,3]
     xyz = sim_xyzs[m]
@@ -254,12 +257,11 @@ def plot_v0_field_vs_gt(path: str, sim_xyzs: np.ndarray, v0_final: np.ndarray,
     if title:
         fig.suptitle(title)
     fig.tight_layout()
-    fig.savefig(path, dpi=120)
-    plt.close(fig)
+    return fig
 
 
-def plot_v0_quiver(path: str, sim_xyzs: np.ndarray, v0_final: np.ndarray,
-                   title: str = "") -> None:
+def plot_v0_quiver(sim_xyzs: np.ndarray, v0_final: np.ndarray,
+                   title: str = "") -> Optional[Figure]:
     """3D quiver of the recovered per-particle v0 (subsampled for legibility)."""
     try:
         import matplotlib
@@ -267,7 +269,7 @@ def plot_v0_quiver(path: str, sim_xyzs: np.ndarray, v0_final: np.ndarray,
         import matplotlib.pyplot as plt
     except Exception as e:
         print(f"[recover_v0] quiver skipped: {e}")
-        return
+        return None
     mag = np.linalg.norm(v0_final, axis=-1)                     # [n]
     moving = mag > 1e-6
     xyz = sim_xyzs[moving]; v = v0_final[moving]
@@ -280,5 +282,4 @@ def plot_v0_quiver(path: str, sim_xyzs: np.ndarray, v0_final: np.ndarray,
               length=0.3, normalize=False, color="tab:blue", linewidth=0.5)
     ax.set_title(title or "recovered v0 field")
     fig.tight_layout()
-    fig.savefig(path, dpi=120)
-    plt.close(fig)
+    return fig

@@ -30,6 +30,9 @@ def parse_args():
     ap.add_argument("--epochs", type=int, default=200)
     ap.add_argument("--sample_every", type=int, default=50)
     ap.add_argument("--ckpt_every", type=int, default=10)
+    ap.add_argument("--snapshot_every", type=int, default=50,
+                    help="save a NAMED ckpt diff_eNNNN.pt every N epochs (history/safety); "
+                         "independent of sampling. <=0 disables.")
     ap.add_argument("--resume", default="auto")
     ap.add_argument("--quota_floor_hours", type=float, default=0.0)
     ap.add_argument("--quota_stop_secs", type=int, default=0)
@@ -177,17 +180,23 @@ def main():
                 raise KeyboardInterrupt
             if epoch % args.ckpt_every == 0:
                 save_ckpt("latest.pt", epoch)
-            if epoch % args.sample_every == 0 and epoch > 0:
+            # NAMED history snapshot -- independent of sampling, so disabling the slow
+            # sampling never costs you intermediate checkpoints.
+            if args.snapshot_every > 0 and epoch % args.snapshot_every == 0 and epoch > 0:
+                save_ckpt(f"diff_e{epoch:04d}.pt", epoch)
+            # sample_every <= 0 disables sampling entirely (ancestral sampling is slow:
+            # ~30 min for 1000 steps) -- train ckpts + loss curve only; probe later.
+            if args.sample_every > 0 and epoch % args.sample_every == 0 and epoch > 0:
                 vid = sample(min(4, args.batch * 4) or 4)
                 save_grid(vid, os.path.join(args.out, "samples", f"sample_e{epoch:04d}_grid.png"))
                 save_grid_gif(vid, os.path.join(args.out, "samples", f"sample_e{epoch:04d}_grid.gif"))
-                save_ckpt(f"diff_e{epoch:04d}.pt", epoch)
 
         save_ckpt("latest.pt", args.epochs - 1)
         save_ckpt("diff_final.pt", args.epochs - 1)
-        vid = sample(4)
-        save_grid(vid, os.path.join(args.out, "samples", "sample_final_grid.png"))
-        save_grid_gif(vid, os.path.join(args.out, "samples", "sample_final_grid.gif"))
+        if args.sample_every > 0:
+            vid = sample(4)
+            save_grid(vid, os.path.join(args.out, "samples", "sample_final_grid.png"))
+            save_grid_gif(vid, os.path.join(args.out, "samples", "sample_final_grid.gif"))
     except KeyboardInterrupt:
         interrupted = True
         save_ckpt("latest.pt", epoch)
@@ -196,6 +205,24 @@ def main():
         mf.close()
     if interrupted:
         return
+
+    # loss curve (human-readable convergence check)
+    try:
+        import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
+        steps, losses = [], []
+        for row in csv.DictReader(open(metrics_csv)):
+            steps.append(int(row["step"])); losses.append(float(row["loss"]))
+        if steps:
+            k = max(1, len(losses) // 200)
+            ma = np.convolve(losses, np.ones(k) / k, mode="valid")
+            plt.figure(figsize=(9, 4.5))
+            plt.plot(steps, losses, alpha=0.25, label="raw")
+            plt.plot(steps[len(steps) - len(ma):], ma, label=f"MA({k})", lw=2)
+            plt.yscale("log"); plt.xlabel("step"); plt.ylabel(f"{args.loss_type} loss")
+            plt.legend(); plt.tight_layout()
+            plt.savefig(os.path.join(args.out, "loss_curve.png"), dpi=120); plt.close()
+    except Exception as e:
+        print(f"[warn] loss curve: {e}")
     print("done")
 
 

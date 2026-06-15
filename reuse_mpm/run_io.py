@@ -44,9 +44,13 @@ import threading
 import traceback
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import numpy as np
+
+if TYPE_CHECKING:  # annotations only (kept off the runtime import graph by
+    import torch  # `from __future__ import annotations`); torch/matplotlib stay
+    from matplotlib.figure import Figure  # lazy inside the methods that use them.
 
 _RUN_PREFIX_RE = re.compile(r"^(\d+)(?:_|$)")  # matches "07" and "07_label"
 
@@ -366,6 +370,19 @@ class RunDir:
             json.dump(obj, f, indent=2, default=str)
         self._event(name, name)
 
+    def savefig(self, name: str, fig: Optional[Figure], dpi: int = 120) -> None:
+        """Persist a matplotlib Figure to <root>/<name> and close it. The plot helper
+        builds the Figure (pure, no IO); the run dir owns where it lands -- business
+        code never spells out a path. No-op if `fig` is None (helper skipped, e.g. no
+        matplotlib), so callers don't guard."""
+        if fig is None:
+            return
+        import matplotlib.pyplot as plt
+
+        fig.savefig(self.path(name), dpi=dpi)
+        plt.close(fig)
+        self._event(name, name)
+
     def save_named_video(self, subdir: str, vid_uint8: np.ndarray, fps: int):
         """Save a video (mp4+gif+frames) into <root>/<subdir>/. Returns that dir.
 
@@ -426,23 +443,34 @@ class RunDir:
 
 
 def entrypoint(
-    run_cls, *, label=None, pick_gpu: bool = False, capture: str = "console.log"
+    run_cls,
+    *,
+    label=None,
+    pick_gpu: bool = False,
+    capture: str = "console.log",
+    context=None,
 ):
-    """Wrap an entrypoint body `fn(cfg, rd)` with the full run-dir lifecycle, so the
+    """Wrap an entrypoint body with the full run-dir lifecycle, so the
     three identical-everywhere boilerplate steps (create / capture_output / finish)
     live in one place instead of being re-typed per entrypoint:
 
       - (optional) pick a free GPU *before* any CUDA context is built
       - create the task RunDir (auto-saving config.json) under the convention tree
       - tee stdout+stderr into the run dir for the whole body (FD-level)
+      - (optional) materialise a task CONTEXT and inject it instead of the bare rd
       - seal the dir (finish) on the way out, EVEN on exception
 
-    Keeps the external `run(cfg) -> RunDir` signature; the decorated body instead
-    takes `(cfg, rd)` -- the created run dir is handed in. `label` is a str or a
-    callable cfg->str (defaults to cfg.run_label). The task subpath is derived from
-    `fn.__module__` (== `__name__` of the entrypoint module; under `python -m` that
-    is "__main__", which task_subpath_from_module resolves via __spec__ -- no stack
-    introspection)."""
+    Keeps the external `run(cfg) -> RunDir` signature. The decorated body takes
+    `(cfg, rd)` by default; if `context` is given it is called as
+    `context(cfg, rd)` (inside capture_output, AFTER pick_gpu so its lazy torch/
+    scene imports happen post-GPU-pick) and its return value is injected instead --
+    so the body is `fn(cfg, ctx)` and reaches `rd` via `ctx.rd`. This is the DI
+    seam: the context factory owns shared preprocessing + provenance side-effects
+    (e.g. recover_context freezes the discretisation cache), so the body cannot
+    forget them. `label` is a str or a callable cfg->str (defaults to
+    cfg.run_label). The task subpath is derived from `fn.__module__` (== `__name__`
+    of the entrypoint module; under `python -m` that is "__main__", which
+    task_subpath_from_module resolves via __spec__ -- no stack introspection)."""
 
     def deco(fn):
         @functools.wraps(fn)
@@ -460,10 +488,22 @@ def entrypoint(
                 fn.__module__, lbl, getattr(cfg, "out", None), config=cfg
             )
             with rd.capture_output(capture):
-                try:
-                    fn(cfg, rd)
-                finally:
-                    rd.finish()  # seal even on crash (traceback still tees to log)
+                if context is None:
+                    try:
+                        fn(cfg, rd)
+                    finally:
+                        rd.finish()  # seal even on crash (traceback still tees)
+                else:
+                    ctx = context(cfg, rd)  # the DI payload (a RunContext)
+                    try:
+                        fn(cfg, ctx)
+                    finally:
+                        # lifetime end: the context persists its OWN derived state
+                        # (context.json) before the dir is sealed -- explicit hook,
+                        # part of the context contract. Runs even on crash, so a
+                        # partial run still records what it ran against.
+                        ctx.seal()
+                        rd.finish()
             return rd
 
         return wrapper
@@ -485,18 +525,40 @@ class RecoverRun(RunDir):
     """train_global_E deliverables: config.json, source_ply, gt/ pred_init/
     pred_recovered/ gt_vs_recovered/ videos, metrics.json, trace.json, recovery.png."""
 
-    def gt_video(self, gt_u8: np.ndarray, fps: int) -> None:
-        self.save_named_video("gt", gt_u8, fps)
+    # gt_video / pred_videos take the RAW render tensors ([T,C,H,W] float in [0,1],
+    # as simulate_and_render returns) -- the uint8 encoding is an IO detail owned by
+    # this write boundary, NOT marshalled by the recovery body. (video_to_uint8 also
+    # detaches, so the body need not.)
+    def gt_video(self, gt: torch.Tensor, fps: int) -> None:
+        from .sim_render import video_to_uint8
 
-    def pred_videos(self, init_u8, recovered_u8, gt_u8, fps: int) -> None:
+        self.save_named_video("gt", video_to_uint8(gt), fps)
+
+    def pred_videos(
+        self,
+        init: torch.Tensor,
+        recovered: torch.Tensor,
+        gt: torch.Tensor,
+        fps: int,
+    ) -> None:
+        """Save the init-guess and recovered renders, plus a GT|recovered montage."""
+        from .sim_render import video_to_uint8
+
+        init_u8, rec_u8, gt_u8 = (video_to_uint8(v) for v in (init, recovered, gt))
         self.save_named_video("pred_init", init_u8, fps)
-        self.save_named_video("pred_recovered", recovered_u8, fps)
-        T = min(gt_u8.shape[0], recovered_u8.shape[0])
+        self.save_named_video("pred_recovered", rec_u8, fps)
+        T = min(gt_u8.shape[0], rec_u8.shape[0])
         self.save_named_video(
             "gt_vs_recovered",
-            np.concatenate([gt_u8[:T], recovered_u8[:T]], axis=2),
+            np.concatenate([gt_u8[:T], rec_u8[:T]], axis=2),
             fps,
         )
+
+    def recovery_plot(self, fig: Optional[Figure]) -> None:
+        """The per-run recovery diagnostic -> recovery.png. The body hands over the
+        Figure its task-specific plot helper built; this declares the artifact NAME
+        (the body never spells out a path). No-op if the helper skipped (None)."""
+        self.savefig("recovery.png", fig)
 
     def metrics(self, **obj) -> None:
         self.write_json("metrics.json", obj)

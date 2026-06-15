@@ -13,11 +13,12 @@ Composition:
   SceneSpec    -- which scene + how it is discretised (shared by every task)
   <Task>Config -- one per entrypoint, composing SimConfig + SceneSpec + task args
 """
+
 from __future__ import annotations
 
 import os
-from dataclasses import asdict, dataclass, field
-from enum import Enum
+from dataclasses import asdict, dataclass, field, fields
+from enum import Enum 
 from typing import List, Optional, Tuple
 
 try:  # py3.8+: Literal in typing
@@ -27,7 +28,6 @@ except ImportError:  # pragma: no cover
 
 from .sampling import CameraDist, EDist, TDist, V0Dist
 
-
 # --------------------------------------------------------------------------- #
 # Scene presets: name -> (kind, path), resolved against env-overridable roots.
 # A preset is the "I don't want to type a path" door; it bakes in the correct
@@ -35,7 +35,8 @@ from .sampling import CameraDist, EDist, TDist, V0Dist
 # --------------------------------------------------------------------------- #
 _PD_DATA = os.path.join(
     os.environ.get("PHYSDREAMER_ROOT", "/tmp2/b10401006/PhysDreamer"),
-    "data", "physics_dreamer",
+    "data",
+    "physics_dreamer",
 )
 _PG_ROOT = os.environ.get("PG_ROOT", "/tmp2/b10401006/PhysGaussian/model")
 
@@ -50,7 +51,7 @@ class ScenePreset(Enum):
 
 
 # (kind, path) for each preset
-PRESETS: dict = {
+PRESETS: dict[ScenePreset, tuple[Literal["pg", "pd"], str]] = {
     ScenePreset.telephone: ("pd", os.path.join(_PD_DATA, "telephone")),
     ScenePreset.alocasia: ("pd", os.path.join(_PD_DATA, "alocasia")),
     ScenePreset.carnations: ("pd", os.path.join(_PD_DATA, "carnations")),
@@ -136,8 +137,7 @@ class SceneSpec:
     def __post_init__(self):
         if self.preset is not None:
             if self.path is not None:
-                raise ValueError(
-                    "scene: choose EITHER --scene.preset OR --scene.path, not both")
+                raise ValueError("scene: choose EITHER --scene.preset OR --scene.path, not both")
             self.kind, self.path = PRESETS[self.preset]
             if self.name is None:
                 self.name = self.preset.value
@@ -145,12 +145,13 @@ class SceneSpec:
         else:
             if self.path is None:
                 raise ValueError(
-                    "scene: give --scene.preset <name>, or "
-                    "--scene.path <dir> --scene.kind {pd,pg}")
+                    "scene: give --scene.preset <name>, or --scene.path <dir> --scene.kind {pd,pg}"
+                )
             if self.kind is None:
                 raise ValueError(
                     "scene: --scene.path requires --scene.kind {pd,pg} "
-                    "(kind is never inferred, by design)")
+                    "(kind is never inferred, by design)"
+                )
 
     @property
     def display_name(self) -> str:
@@ -189,6 +190,29 @@ class ForwardConfig:
     v0_grad_slope: float = 1.0
     out: Optional[str] = None
     run_label: str = ""
+
+    @classmethod
+    def from_run_json(cls, d: dict) -> "ForwardConfig":
+        """Reconstruct the typed ForwardConfig from a forward_gen run's config.json
+        (the inverse of RunDir's auto-save). Consumers (recover, sweep, cross-run
+        plots) read a GT run's config as THIS dataclass, never as a raw dict --
+        no stringly-typed `g["E"]` indexing that drifts or typos.
+
+        Nests SceneSpec/SimConfig; drops the non-config keys the run dir adds
+        (`task`, `_provenance`, merged extras like `scene_name`/`true_E`); and
+        accepts the legacy top-level scene schema (dataset_dir/scene_type/...).
+        """
+        if isinstance(d.get("scene"), dict):  # current schema: nested ForwardConfig
+            scene = SceneSpec(**d["scene"])
+        else:  # legacy schema: scene fields lived at the top level
+            scene = SceneSpec(
+                path=d["dataset_dir"], kind=d.get("scene_type", "pd"),
+                downsample_scale=d.get("downsample_scale", 0.1),
+                cache_path=d.get("scene_cache"))
+        sim = SimConfig(**d["sim"]) if isinstance(d.get("sim"), dict) else SimConfig()
+        known = {f.name for f in fields(cls)} - {"scene", "sim"}
+        rest = {k: v for k, v in d.items() if k in known}
+        return cls(scene=scene, sim=sim, **rest)
 
 
 @dataclass
@@ -261,9 +285,9 @@ class RecoverFieldConfig:
     gt_run: str
     backbone: Literal["voxel", "triplane"] = "voxel"
     init_E: float = 3e5
-    res: int = 16          # grid / plane resolution
-    feat_dim: int = 16     # triplane per-plane feature channels
-    mlp_hidden: int = 64   # triplane decoder width
+    res: int = 16  # grid / plane resolution
+    feat_dim: int = 16  # triplane per-plane feature channels
+    mlp_hidden: int = 64  # triplane decoder width
     reg_weight: float = 1e-3  # smoothness (TV) weight; 0 disables
     iters: int = 80
     lr: float = 0.05
@@ -289,13 +313,13 @@ class RecoverV0Config:
 
     gt_run: str
     kind: Literal["global", "voxel", "triplane"] = "triplane"
-    res: int = 16          # grid / plane resolution (voxel|triplane)
-    feat_dim: int = 16     # triplane per-plane feature channels
-    mlp_hidden: int = 64   # triplane decoder width
-    v_clamp: float = 5.0   # per-component |v0| clamp (CFL/blow-up guard)
-    vel_scale: float = 1.0    # field output ×this (PhysDreamer uses 0.1)
-    reg_weight: float = 0.0   # TV smoothness weight; 0 disables (no-op for "global")
-    grad_clip: float = 10.0   # max grad-norm on field params (PhysDreamer-style loose)
+    res: int = 16  # grid / plane resolution (voxel|triplane)
+    feat_dim: int = 16  # triplane per-plane feature channels
+    mlp_hidden: int = 64  # triplane decoder width
+    v_clamp: float = 5.0  # per-component |v0| clamp (CFL/blow-up guard)
+    vel_scale: float = 1.0  # field output ×this (PhysDreamer uses 0.1)
+    reg_weight: float = 0.0  # TV smoothness weight; 0 disables (no-op for "global")
+    grad_clip: float = 10.0  # max grad-norm on field params (PhysDreamer-style loose)
     weight_decay: float = 0.0  # AdamW weight decay (PhysDreamer uses 1e-4)
     # window_start: if >0, the loss window GROWS window_start->window over training
     # (PhysDreamer curriculum: the spatial field is identified from accumulated multi-

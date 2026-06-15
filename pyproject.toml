@@ -7,6 +7,13 @@ dependencies = [
     "tyro",   # dataclass-driven CLIs; the resolved config IS the serialized config
 ]
 
+[tool.ruff]
+target-version = "py39"
+line-length = 100
+# Heavy run dirs are gitignored (ruff honors that), but be explicit so a stray
+# uvx ruff invocation never walks into them.
+extend-exclude = ["outputs", "_archive", "data-pd", "reports"]
+
 [tool.ty.environment]
 # Use the conda env that has torch/warp/physdreamer deps so ty resolves them.
 python = "/tmp2/b10401006/.symlinks/miniforge3/envs/physdreamer"

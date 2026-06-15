@@ -77,6 +77,8 @@ def main():
     ap.add_argument("--res", type=int, default=128)
     ap.add_argument("--out", required=True)
     ap.add_argument("--pct", type=float, default=99.5, help="percentile of |disp| for the [0,1] scale")
+    ap.add_argument("--scale", type=float, default=None,
+                    help="force scale_px instead of computing p<pct> (use to MATCH another pack's encoding)")
     args = ap.parse_args()
     import torch
 
@@ -111,7 +113,7 @@ def main():
             print(f"  {si}/{len(samples)}", flush=True)
 
     # global scale -> map signed flow to [0,1]; invert later: disp=(x-0.5)*2*scale
-    scale = float(np.percentile(np.abs(raw), args.pct))
+    scale = float(args.scale) if args.scale else float(np.percentile(np.abs(raw), args.pct))
     scale = max(scale, 1e-6)
     packed = np.clip(raw / (2 * scale) + 0.5, 0.0, 1.0).astype(np.float32)
     np.save(args.out, packed)

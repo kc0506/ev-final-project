@@ -93,6 +93,9 @@ def load_physgaussian_scene(
 
     if cache_path is not None and os.path.exists(cache_path):
         blob = torch.load(cache_path, map_location=device)
+        if blob.get("norm_version") != 2:
+            print("[scene-PG] WARNING: legacy-normalization cache; see scene.py "
+                  "warning (wall-clamp risk for new data with large v0).")
         d = blob["disc"]
         sim_mask = d["sim_mask"].to(device)
         sim_xyzs = d["sim_xyzs"].to(device)
@@ -109,7 +112,11 @@ def load_physgaussian_scene(
 
         pos_max = obj.max(); pos_min = obj.min()
         scale = (pos_max - pos_min) * 1.8
-        shift = -pos_min + (pos_max - pos_min) * 0.25
+        # norm v2: per-axis centering at 0.5; see scene.load_scene for rationale
+        # (legacy 0.25*range shift sits ~2.5 cells from the g2p position clamp).
+        lo3 = obj.min(dim=0).values  # [3]
+        hi3 = obj.max(dim=0).values  # [3]
+        shift = scale * 0.5 - (lo3 + hi3) / 2.0  # [3]
         obj_n = (obj + shift) / scale
 
         sim_aabb = torch.stack([obj_n.min(0)[0], obj_n.max(0)[0]], 0)
@@ -151,6 +158,7 @@ def load_physgaussian_scene(
             torch.save({
                 "downsample_scale": downsample_scale, "grid_size": grid_size,
                 "top_k": top_k, "model_dir": model_dir, "freeze_axis": ax,
+                "norm_version": 2,
                 "disc": {
                     "sim_mask": sim_mask.cpu(), "sim_xyzs": sim_xyzs.cpu(),
                     "points_vol": points_vol, "top_k_index": top_k_index.cpu(),

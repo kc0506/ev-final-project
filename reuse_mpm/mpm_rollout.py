@@ -23,7 +23,7 @@ from torch import Tensor
 from .config import SimConfig
 from .diff_sim import MPMDifferentiableSimulation
 from .scene import SceneBundle
-from .sim_render import build_mpm
+from .sim_render import build_mpm, wall_contact_count
 
 
 class MpmRollout:
@@ -48,6 +48,10 @@ class MpmRollout:
         self.density_mask = torch.ones_like(self.density).int()
         self.nu_t = torch.tensor(float(cfg.nu), device=device)
         self._onev = torch.ones(n, device=device)
+        # wall-contact accounting (warp-wall-clamp): rollouts that touch the g2p
+        # position clamp have invalid positions AND gradients there.
+        self.wall_contact_frames: int = 0
+        self._wall_warned: bool = False
 
     def rollout_to_frame(
         self,
@@ -88,8 +92,18 @@ class MpmRollout:
         cfg = self.cfg
         extra = max(0, (ti + 1 - grad_window) * cfg.substep)  # 0 => full BPTT
         num_grad = cfg.substep * (ti + 1) - extra  # num_grad + extra == total substeps
-        return MPMDifferentiableSimulation.apply(
+        pos = MPMDifferentiableSimulation.apply(
             self.solver, self.state, self.model, 0, cfg.substep_size, num_grad,
             self.init_xyzs, v0, E_vec, self.nu_t, self.density, self.density_mask,
             None, self.device, requires_grad, extra,
         )
+        n_wall = wall_contact_count(pos.detach(), cfg)
+        if n_wall:
+            self.wall_contact_frames += 1
+            if not self._wall_warned:
+                self._wall_warned = True
+                print(f"[rollout] WARNING: {n_wall} particle(s) pinned at the g2p "
+                      f"position clamp at frame {ti + 1}; positions AND gradients "
+                      "there are invalid (warp-wall-clamp). Reported once per "
+                      "MpmRollout; see .wall_contact_frames for the running count.")
+        return pos

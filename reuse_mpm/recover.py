@@ -10,11 +10,14 @@ cosine decay. Optional coarse grid pre-init.
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 import torch
 import torch.nn.functional as F
+
+if TYPE_CHECKING:  # annotation only; matplotlib stays lazy inside the plot helpers
+    from matplotlib.figure import Figure
 
 from .config import SimConfig
 from .efield import EField
@@ -186,17 +189,17 @@ def recover_field_E(
     return out
 
 
-def plot_field_recovery(path: str, result: dict, true_E: Optional[float],
-                        title: str = "") -> None:
+def plot_field_recovery(result: dict, true_E: Optional[float],
+                        title: str = "") -> Optional[Figure]:
     """Three panels: loss vs iter (objective) + E geomean/range vs iter + final
-    per-particle E histogram."""
+    per-particle E histogram. Returns the Figure (RunDir owns where it lands)."""
     try:
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
     except Exception as e:
         print(f"[recover] field plot skipped: {e}")
-        return
+        return None
     fig, ax = plt.subplots(1, 3, figsize=(15, 4))
     ax[0].plot(result["loss_traj"], "o-", ms=3)
     ax[0].set_yscale("log"); ax[0].set_xlabel("iter"); ax[0].set_ylabel("photometric loss")
@@ -220,12 +223,11 @@ def plot_field_recovery(path: str, result: dict, true_E: Optional[float],
     if title:
         fig.suptitle(title)
     fig.tight_layout()
-    fig.savefig(path, dpi=120)
-    plt.close(fig)
+    return fig
 
 
-def plot_field_scatter(path: str, sim_xyzs: np.ndarray, E_final: np.ndarray,
-                       title: str = "") -> None:
+def plot_field_scatter(sim_xyzs: np.ndarray, E_final: np.ndarray,
+                       title: str = "") -> Optional[Figure]:
     """3D scatter of particles coloured by recovered log10(E)."""
     try:
         import matplotlib
@@ -233,7 +235,7 @@ def plot_field_scatter(path: str, sim_xyzs: np.ndarray, E_final: np.ndarray,
         import matplotlib.pyplot as plt
     except Exception as e:
         print(f"[recover] field scatter skipped: {e}")
-        return
+        return None
     fig = plt.figure(figsize=(6, 5))
     ax = fig.add_subplot(111, projection="3d")
     c = np.log10(E_final)
@@ -242,8 +244,7 @@ def plot_field_scatter(path: str, sim_xyzs: np.ndarray, E_final: np.ndarray,
     fig.colorbar(p, ax=ax, shrink=0.6, label="log10(E)")
     ax.set_title(title or "recovered E field")
     fig.tight_layout()
-    fig.savefig(path, dpi=120)
-    plt.close(fig)
+    return fig
 
 
 def field_vs_gt_metrics(E_final: np.ndarray, E_gt: np.ndarray) -> dict:
@@ -262,8 +263,8 @@ def field_vs_gt_metrics(E_final: np.ndarray, E_gt: np.ndarray) -> dict:
     return {"log10_rmse_vs_gt": rmse, "log10_corr_vs_gt": corr}
 
 
-def plot_field_vs_gt(path: str, sim_xyzs: np.ndarray, E_final: np.ndarray,
-                     E_gt: np.ndarray, title: str = "") -> None:
+def plot_field_vs_gt(sim_xyzs: np.ndarray, E_final: np.ndarray,
+                     E_gt: np.ndarray, title: str = "") -> Optional[Figure]:
     """GT vs recovered field: scatter of per-particle log10(E), plus side-by-side
     spatial scatters coloured by log10(E) on a shared colour scale."""
     try:
@@ -272,7 +273,7 @@ def plot_field_vs_gt(path: str, sim_xyzs: np.ndarray, E_final: np.ndarray,
         import matplotlib.pyplot as plt
     except Exception as e:
         print(f"[recover] field-vs-gt plot skipped: {e}")
-        return
+        return None
     lf, lg = np.log10(E_final), np.log10(E_gt)
     vmin, vmax = float(min(lf.min(), lg.min())), float(max(lf.max(), lg.max()))
     fig = plt.figure(figsize=(15, 4))
@@ -291,19 +292,23 @@ def plot_field_vs_gt(path: str, sim_xyzs: np.ndarray, E_final: np.ndarray,
     if title:
         fig.suptitle(title)
     fig.tight_layout()
-    fig.savefig(path, dpi=120)
-    plt.close(fig)
+    return fig
 
 
-def plot_recovery(path: str, result: dict, true_E: float, title: str = "") -> None:
-    """Two panels: loss vs iter (THE objective) + E vs iter."""
+def plot_recovery(result: dict, true_E: float, title: str = "") -> Optional[Figure]:
+    """Two panels: loss vs iter (THE objective) + E vs iter.
+
+    Returns the Figure (None if matplotlib is unavailable); the caller's RunDir owns
+    where it lands and closes it (see RecoverRun.recovery_plot) -- this helper does
+    no path-building or file IO.
+    """
     try:
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
     except Exception as e:
         print(f"[recover] plot skipped: {e}")
-        return
+        return None
     fig, ax = plt.subplots(1, 2, figsize=(11, 4))
     ax[0].plot(result["loss_traj"], "o-", ms=3)
     ax[0].set_yscale("log"); ax[0].set_xlabel("iter"); ax[0].set_ylabel("photometric loss")
@@ -317,5 +322,4 @@ def plot_recovery(path: str, result: dict, true_E: float, title: str = "") -> No
     if title:
         fig.suptitle(title)
     fig.tight_layout()
-    fig.savefig(path, dpi=120)
-    plt.close(fig)
+    return fig

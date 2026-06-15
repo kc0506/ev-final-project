@@ -193,6 +193,26 @@ def build_mpm(
     return solver, state, model
 
 
+def wall_contact_count(pos_normalized: torch.Tensor, cfg: SimConfig) -> int:
+    """Count particles touching the g2p position clamp (warp-wall-clamp).
+
+    pos_normalized: [n, 3] particle positions in NORMALIZED sim coords.
+
+    The vendored g2p hard-clamps positions per component to
+    [2*dx, grid_lim - 2*dx] without zeroing velocity (PhysDreamer
+    warp_mpm/mpm_utils.py:554-565), so a contact pins the coordinate
+    bit-exactly at the bound: positions AND gradients of such particles are
+    invalid from that substep on. `<=`/`>=` is therefore an exact signature,
+    not a tolerance.
+
+    Returns the number of particles with any clamped component.
+    """
+    dx = cfg.grid_lim / cfg.grid_size
+    lo, hi = 2.0 * dx, cfg.grid_lim - 2.0 * dx
+    with torch.no_grad():
+        return int(((pos_normalized <= lo) | (pos_normalized >= hi)).any(dim=-1).sum().item())
+
+
 def simulate_positions(
     scene: SceneBundle,
     E: Union[float, torch.Tensor],
@@ -247,14 +267,23 @@ def simulate_positions(
         sub_dt = cfg.substep_size
         pos_list = [(init_xyzs.clone() * scene.scale) - scene.shift]
         prev = state
+        wall_frames: List[tuple] = []  # (frame, n_pinned)
         for i in range(cfg.num_frames - 1):
             for _ in range(cfg.substep):
                 nxt: MPMStateStruct = prev.partial_clone(requires_grad=False)
                 solver.p2g2p_differentiable(model, prev, nxt, sub_dt, device=device)
                 prev = nxt
             pos = wp.to_torch(nxt.particle_x).clone()
+            n_wall = wall_contact_count(pos, cfg)
+            if n_wall:
+                wall_frames.append((i + 1, n_wall))
             pos = (pos * scene.scale) - scene.shift  # [notes] mpm to 3dgs coords
             pos_list.append(pos)
+        if wall_frames:
+            print(f"[sim] WARNING: wall contact in {len(wall_frames)} frame(s) -- particles "
+                  f"pinned at the g2p position clamp, (frame, count): {wall_frames[:6]}"
+                  f"{'...' if len(wall_frames) > 6 else ''}. This run's dynamics are "
+                  "invalid near the wall (warp-wall-clamp); reject or re-center.")
 
     return pos_list
 

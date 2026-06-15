@@ -155,6 +155,11 @@ def load_scene(
     # ---- particle discretisation (NON-deterministic via k-means): cache it ----
     if cache_path is not None and os.path.exists(cache_path):
         blob = torch.load(cache_path, map_location=device)
+        if blob.get("norm_version") != 2:
+            print("[scene] WARNING: legacy-normalization cache (object min corner "
+                  "~2.5 cells from the g2p position clamp). Fine for REPLAYING old "
+                  "datasets; do NOT generate new data from it with large v0 toward "
+                  "the near wall (particles pin at the clamp; data+grads invalid).")
         assert blob["downsample_scale"] == downsample_scale and \
             blob["grid_size"] == grid_size and blob["top_k"] == top_k, \
             f"cache {cache_path} built with different params: {blob.get('downsample_scale')}, " \
@@ -194,7 +199,16 @@ def load_scene(
         pos_max = sim_xyzs.max()
         pos_min = sim_xyzs.min()
         scale = (pos_max - pos_min) * 1.8
-        shift = -pos_min + (pos_max - pos_min) * 0.25
+        # norm v2: center EVERY axis at 0.5 (scale stays a global scalar so the
+        # geometry is not distorted). The legacy PhysDreamer shift
+        # (-pos_min + 0.25*range) parked the object's min corner at 0.25/1.8~0.139,
+        # only ~2.5 cells (g32) from the g2p position clamp at 2*dx; a large
+        # excitation toward that wall pins particles bit-exactly at the clamp
+        # (positions AND gradients invalid). Centering gives >=0.16 normalized
+        # margin per side, far more on thin axes.
+        lo3 = sim_xyzs.min(dim=0).values  # [3]
+        hi3 = sim_xyzs.max(dim=0).values  # [3]
+        shift = scale * 0.5 - (lo3 + hi3) / 2.0  # [3]
 
         # [note] filled does not modify gaussians! so it's MPM only, not affecting rendering.
         filled = os.path.join(dataset_dir, "internal_filled_points.ply")
@@ -219,8 +233,8 @@ def load_scene(
         # a point-less cluster with c_grad=0 at lr=1, and the final aggregation sums
         # over an empty assigned set -> 0. Such origin "ghosts" then get frozen by
         # find_far_points and clamped inward by g2p, polluting the MPM cloud. The
-        # normalisation puts every real coord at >= 0.25/1.8 > 0, so an exact-zero
-        # output row is unambiguously a ghost. Assert that precondition (so the
+        # centered normalisation puts every real coord at >= ~0.222 > 0, so an
+        # exact-zero output row is unambiguously a ghost. Assert that precondition (so the
         # zero-filter can never hit a real point), then drop ghosts BEFORE deriving
         # KNN / volume / freeze_mask (all indexed off sim_xyzs).
         assert (sim_xyzs.min(dim=0).values > 0).all(), \
@@ -254,7 +268,7 @@ def load_scene(
             os.makedirs(os.path.dirname(os.path.abspath(cache_path)), exist_ok=True)
             torch.save({
                 "downsample_scale": downsample_scale, "grid_size": grid_size,
-                "top_k": top_k, "dataset_dir": dataset_dir,
+                "top_k": top_k, "dataset_dir": dataset_dir, "norm_version": 2,
                 "disc": {
                     "sim_mask": sim_mask.cpu(), "sim_xyzs": sim_xyzs.cpu(),
                     "points_vol": points_vol, "top_k_index": top_k_index.cpu(),
