@@ -1,0 +1,246 @@
+%==============================================================
+%  EV Final Poster -- A0 portrait  (beamerposter)
+%  Structure follows poster/outline.md
+%  Layout / palette / fonts after EV海報參考模板.pptx
+%  Build:  just poster   (= python3 refresh.py && latexmk -pdf main.tex)
+%==============================================================
+\documentclass[final,t]{beamer}
+\usepackage[size=a0,orientation=portrait,scale=1.06]{beamerposter}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{helvet}            % Arial-like sans
+\renewcommand{\familydefault}{\sfdefault}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,fit}
+
+\input{generated/results.tex}
+
+%---------------- palette --------------------------------------
+\definecolor{pblue}{HTML}{2E5394}
+\definecolor{good}{HTML}{1B7F3B}
+\definecolor{bad}{HTML}{B11A1A}
+
+\setbeamercolor{block title}{bg=pblue,fg=white}
+\setbeamercolor{block body}{bg=white,fg=black!88}   % transparent body, only title bars carry colour
+\setbeamerfont{block title}{series=\bfseries,size=\LARGE}
+\setbeamercolor{itemize item}{fg=pblue}
+\setbeamercolor{itemize subitem}{fg=pblue}
+\setbeamertemplate{itemize items}[circle]
+
+\setlength{\parskip}{0.28\baselineskip}
+\usepackage{etoolbox}
+\AtBeginEnvironment{itemize}{\setlength{\itemsep}{0.5ex}\setlength{\parskip}{0pt}}
+\AtBeginEnvironment{enumerate}{\setlength{\itemsep}{0.5ex}\setlength{\parskip}{0pt}}
+
+% generous block-title padding, compact gaps between blocks
+\setbeamertemplate{block begin}{
+  \vskip0.6ex
+  \begin{beamercolorbox}[colsep*=0pt,sep=1.7ex,rounded=true]{block title}
+    \hspace{0.5cm}\usebeamerfont{block title}\insertblocktitle
+  \end{beamercolorbox}
+  \nointerlineskip\vskip0.6ex
+  \usebeamerfont{block body}%
+  \begin{beamercolorbox}[colsep*=0pt,sep=1.2ex,rounded=true,vmode]{block body}
+    \vskip0.3ex
+}
+\setbeamertemplate{block end}{
+    \vskip0.3ex
+  \end{beamercolorbox}
+}
+
+\newcommand{\cmark}{\textcolor{good}{\textbf{\checkmark}}}
+\newcommand{\xmark}{\textcolor{bad}{$\boldsymbol{\times}$}}
+
+\setlength{\columnsep}{1.6cm}
+
+\begin{document}
+\begin{frame}[t]{}
+
+%================= HEADER ======================================
+\begin{beamercolorbox}[wd=\textwidth,rounded=true,sep=0.9cm,leftskip=1.5cm,rightskip=1.5cm]{block title}
+  \centering
+  {\Huge\bfseries Beyond Rest-State, Homogeneous System Identification}\\[4mm]
+  {\large Complex initial conditions, non-uniform fields, and a spectral loss, via Differentiable MPM \texttt{+} 3D Gaussian Splatting}\\[4mm]
+  {\large HONG, Casey (b10401006)\ \ $\cdot$\ \ Embodied Vision (CSIE5421), NTU}
+\end{beamercolorbox}
+\vspace{0.1cm}
+
+%================= ROW 1 : Motivation | Method ================
+\begin{columns}[t,totalwidth=\textwidth]
+\begin{column}{0.49\textwidth}
+\begin{block}{Motivation}
+Traditional system identification treats an object as a \textbf{homogeneous}
+material at \textbf{rest}, moving uniformly in one direction. We pose a harder
+problem: recover \textbf{complex initial conditions on a non-uniform material}.
+We address four limitations of prior methods:
+\begin{itemize}
+  \item \textbf{Rest-state assumption.} How can we learn an object
+        \emph{released from a deformed state} at $t{=}0$?
+  \item \textbf{Scalar only.} Can we learn a \emph{field} to model richer setups?
+  \item \textbf{Unstable identification.} When is the system actually
+        identifiable?
+  \item \textbf{Plain $L_2$ losses.} They are not good enough for oscillations.
+        We propose a \textbf{spectral loss}, and jointly train initial velocity
+        and material while analysing which one dominates.
+\end{itemize}
+\end{block}
+\end{column}
+
+\begin{column}{0.49\textwidth}
+\begin{block}{Method}
+\centering
+\begin{tikzpicture}[font=\small,node distance=7mm,
+  b/.style={draw=pblue,line width=1pt,rounded corners,fill=white,
+            minimum height=1.5cm,inner sep=4pt,align=center},
+  >={Stealth[length=5mm]}]
+  \node[b] (sc) {multi-view\\scene};
+  \node[b,right=of sc] (gs) {3DGS\\particles};
+  \node[b,right=of gs] (fg) {fg / bg\\split};
+  \node[b,below=8mm of fg] (mpm) {differentiable MPM\\\scriptsize trainable $v_0,\,F_0,\,E$ (grid)};
+  \node[b,left=of mpm] (roll) {rollout\\$+$ bg};
+  \node[b,left=of roll] (loss) {loss vs.\ GT video\\\scriptsize $L_2$ $+$ spectral};
+  \draw[->,line width=1pt] (sc)--(gs);
+  \draw[->,line width=1pt] (gs)--(fg);
+  \draw[->,line width=1pt] (fg)--(mpm);
+  \draw[->,line width=1pt] (mpm)--(roll);
+  \draw[->,line width=1pt] (roll)--(loss);
+  \draw[->,line width=1.2pt,pblue] (loss.north) to[bend left=22]
+        node[above,font=\scriptsize,pblue]{$\nabla$ update $v_0,F_0,E$} (mpm.north-|sc);
+\end{tikzpicture}
+
+\vspace{2mm}\raggedright
+Field trainables use a grid or an MLP queried at the particle position.
+\textbf{Learning $F_0$.} The rest state $X$ is \emph{unknown}; only the deformed
+state $x_0$ is observed. We therefore express the displacement as a function of
+the \emph{known} $x_0$, so $X=x_0-\hat u_0(x_0)$ and
+\[
+  F_0=\frac{\partial x_0}{\partial X}
+     =\Big(\tfrac{\partial X}{\partial x_0}\Big)^{-1}
+     =\big(I-\nabla_{x_0}\hat u_0\big)^{-1}.
+\]
+An MLP parametrises $\hat u_0(x_0)$; $\nabla_{x_0}\hat u_0$ comes from autograd on
+the known $x_0$, then we invert.
+\end{block}
+\end{column}
+\end{columns}
+
+%================= ROW 2 : Results 1 (full) ===================
+\begin{block}{Results: released from a deformed state ($F_0$)}
+\textbf{$F_0$ is recoverable.} A global $V_0=\exp(S)$ recovers all 6 DOF
+(max$|$err$|$ \sErrMax); a coarse 15-DOF field recovers the target mode.
+\begin{columns}[T,totalwidth=\textwidth]
+\begin{column}{0.24\textwidth}\centering
+\includegraphics[width=\linewidth]{figures/f0_released_panel.png}\\[1mm]
+{\footnotesize Per-frame forward (release).}
+\end{column}
+\begin{column}{0.24\textwidth}\centering
+\includegraphics[width=0.88\linewidth]{figures/f0_stretch.png}\\[1mm]
+{\footnotesize GT vs.\ predicted stretch.}
+\end{column}
+\begin{column}{0.24\textwidth}\centering
+\includegraphics[width=\linewidth]{figures/f0_bend_panel.png}\\[1mm]
+{\footnotesize Rest state and $\hat u_0$.}
+\end{column}
+\begin{column}{0.24\textwidth}\centering
+\includegraphics[width=0.95\linewidth]{figures/f0_S_recovery.png}\\[1mm]
+{\footnotesize Global $S$ recovery (6 DOF).}
+\end{column}
+\end{columns}
+\end{block}
+
+%================= ROW 3 : Results 2 (full) ===================
+\begin{block}{Results: inhomogeneous velocity and material distribution}
+\textbf{Non-uniform initial velocity $v_0(\mathbf{x})$} (designed bend / mid-kick
+excitations) and \textbf{non-uniform material $E(\mathbf{x})$} are recovered as
+per-particle fields.
+\begin{columns}[T,totalwidth=\textwidth]
+\begin{column}{0.24\textwidth}\centering
+\includegraphics[width=0.92\linewidth]{figures/field_bend_quiver.png}\\[1mm]
+{\footnotesize $v_0$ quiver: bend.}
+\end{column}
+\begin{column}{0.24\textwidth}\centering
+\includegraphics[width=0.92\linewidth]{figures/imgfield_mid_quiver.png}\\[1mm]
+{\footnotesize $v_0$ quiver: mid-kick.}
+\end{column}
+\begin{column}{0.24\textwidth}\centering
+\includegraphics[width=\linewidth]{figures/efield_E.png}\\[1mm]
+{\footnotesize Learned $E(\mathbf{x})$ (ramp-$E$).}
+\end{column}
+\begin{column}{0.24\textwidth}\centering
+\includegraphics[width=\linewidth]{figures/imgfield_profile.png}\\[1mm]
+{\footnotesize Profile match (GT vs.\ pred).}
+\end{column}
+\end{columns}
+\end{block}
+
+%================= ROW 4 : Analysis x2 ========================
+\begin{columns}[t,totalwidth=\textwidth]
+\begin{column}{0.49\textwidth}
+\begin{block}{Analysis: amplitude vs.\ frequency}
+\centering
+\includegraphics[width=0.49\linewidth]{figures/f0_chan_release.png}\hfill
+\includegraphics[width=0.49\linewidth]{figures/f0_chan_drop.png}\\[1mm]
+{\footnotesize Two 2D landscapes. Left: $E$ dominant (frequency). Right:
+$v/F$ dominant on amplitude, $E$ still effective.}
+
+\vspace{2mm}\raggedright
+\textbf{Conclusion.} $E$ (and $\nu$) controls the \textbf{frequency} of motion,
+while $v_0/F_0$ only set its \textbf{amplitude}. The excitation type therefore
+decides which channel carries each parameter.
+\end{block}
+\end{column}
+
+\begin{column}{0.49\textwidth}
+\begin{block}{Analysis: a spectral loss for oscillations}
+When the frequency mismatch is large, a time-domain $L_2$ loss between two
+oscillations is \textbf{bounded} (distance saturates at $2A$), giving a flat
+plateau and local minima. A \textbf{spectral} loss stays discriminative.
+
+\vspace{2mm}\centering
+\includegraphics[width=0.49\linewidth]{figures/f0_spectra.png}\hfill
+\includegraphics[width=0.49\linewidth]{figures/f0_period.png}\\[1mm]
+{\footnotesize Left: spectra across $E$. Right: period $\propto 1/\sqrt{E}$,
+until it hits a Nyquist wall (an aliasing false basin at high $E$).}
+\end{block}
+\end{column}
+\end{columns}
+
+%================= ROW 5 : Augmented learning | Takeaways =====
+\begin{columns}[t,totalwidth=\textwidth]
+\begin{column}{0.49\textwidth}
+\begin{block}{Augmenting a non-identifiable scenario}
+When the excited axis points toward the camera, the initial velocity $v_y$ is
+hard to learn from a single view: $(E,v_0)$ collapses
+($E{\to}\svBestE$, $-\svErrE\%$). \textbf{Adding a second view resolves it}
+($E$ \mvErrE\%, $v_0$ \mvErrVz\%).
+
+\vspace{2mm}\centering
+\includegraphics[width=0.47\linewidth]{figures/sv_fail_panel.png}\hfill
+\includegraphics[width=0.47\linewidth]{figures/mv_panel.png}\\[1mm]
+{\footnotesize Single view (left, fails) vs.\ front $+$ side (right, solved).}
+\end{block}
+\end{column}
+
+\begin{column}{0.49\textwidth}
+\begin{block}{Takeaways}
+\begin{enumerate}
+  \item We recover \textbf{complex initial conditions} (released from a deformed
+        state, $F_0$) and \textbf{non-uniform fields} ($v_0$, $E$), beyond the
+        rest-state homogeneous assumption.
+  \item A \textbf{spectral loss} reads the frequency channel that a time-domain
+        $L_2$ loss cannot, with a clear Nyquist limit.
+  \item $E$ sets frequency, $v_0/F_0$ set amplitude: excitation design governs
+        identifiability.
+  \item \textbf{Future:} amortise a scene-conditioned physics prior and sample
+        plausible physics (VSD $+$ reconstruction guidance).
+\end{enumerate}
+\end{block}
+\end{column}
+\end{columns}
+
+\end{frame}
+\end{document}

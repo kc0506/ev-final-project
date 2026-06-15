@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <meta name="title" content="Beyond Rest-State, Homogeneous System Identification - Casey Hong">
+  <meta name="description" content="Recovering complex initial conditions (v0, F0) on non-uniform material fields with differentiable MPM + 3D Gaussian Splatting, plus a spectral loss for oscillatory motion.">
+  <meta name="keywords" content="system identification, differentiable physics, material point method, 3D Gaussian Splatting, inverse problems, spectral loss, computer vision">
+  <meta name="author" content="Casey Hong">
+  <meta name="robots" content="index, follow">
+  <meta name="language" content="English">
+
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="National Taiwan University">
+  <meta property="og:title" content="Beyond Rest-State, Homogeneous System Identification">
+  <meta property="og:description" content="Recovering complex initial conditions on non-uniform material fields via differentiable MPM + 3D Gaussian Splatting.">
+  <meta property="og:url" content="https://kc0506.github.io/ev-final-project/">
+
+  <title>Beyond Rest-State, Homogeneous System Identification</title>
+
+  <link rel="icon" type="image/x-icon" href="static/images/favicon.ico">
+
+  <link rel="stylesheet" href="static/css/bulma.min.css">
+  <link rel="stylesheet" href="static/css/index.css">
+  <link rel="preload" href="static/css/bulma-carousel.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
+  <link rel="preload" href="static/css/bulma-slider.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
+  <link rel="preload" href="static/css/fontawesome.all.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
+  <link rel="preload" href="https://cdn.jsdelivr.net/gh/jpswalsh/academicons@1/css/academicons.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
+  <noscript>
+    <link rel="stylesheet" href="static/css/bulma-carousel.min.css">
+    <link rel="stylesheet" href="static/css/bulma-slider.min.css">
+    <link rel="stylesheet" href="static/css/fontawesome.all.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/jpswalsh/academicons@1/css/academicons.min.css">
+  </noscript>
+
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <script defer src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+  <script defer src="static/js/fontawesome.all.min.js"></script>
+  <script defer src="static/js/bulma-carousel.min.js"></script>
+  <script defer src="static/js/bulma-slider.min.js"></script>
+  <script defer src="static/js/index.js"></script>
+
+  <style>
+    .fig-cap { color:#555; margin-top:.4rem; }
+    .metric { color:#1f5fa8; }
+    .metric-row .column { border-left:3px solid #e3ebf5; }
+    .gifcard img { width:100%; border:1px solid #ededed; border-radius:8px; background:#fff; }
+  </style>
+</head>
+<body>
+
+  <button class="scroll-to-top" onclick="scrollToTop()" title="Scroll to top" aria-label="Scroll to top">
+    <i class="fas fa-chevron-up"></i>
+  </button>
+
+  <main id="main-content">
+  <section class="hero">
+    <div class="hero-body">
+      <div class="container is-max-desktop">
+        <div class="columns is-centered">
+          <div class="column has-text-centered">
+            <h1 class="title is-1 publication-title">Beyond Rest-State, Homogeneous<br>System Identification</h1>
+            <h2 class="subtitle is-4" style="margin-top:.6rem;color:#4a4a4a">
+              Complex initial conditions, non-uniform material fields, and a spectral loss,<br>
+              via Differentiable MPM + 3D Gaussian Splatting
+            </h2>
+            <div class="is-size-5 publication-authors">
+              <span class="author-block"><strong>Casey Hong</strong> (b10401006)</span>
+            </div>
+            <div class="is-size-6 publication-authors">
+              <span class="author-block">Embodied Vision (CSIE5421) &middot; National Taiwan University</span>
+            </div>
+
+            <div class="column has-text-centered">
+              <div class="publication-links">
+                <span class="link-block">
+                  <a href="https://github.com/kc0506/ev-final-project" target="_blank"
+                     class="external-link button is-normal is-rounded is-dark">
+                    <span class="icon"><i class="fab fa-github"></i></span>
+                    <span>Code</span>
+                  </a>
+                </span>
+                <span class="link-block">
+                  <a href="https://github.com/kc0506/gic/tree/feat/f0-img-loss" target="_blank"
+                     class="external-link button is-normal is-rounded is-dark">
+                    <span class="icon"><i class="fab fa-github"></i></span>
+                    <span>Code (inverse pipeline / GIC)</span>
+                  </a>
+                </span>
+                <span class="link-block">
+                  <a href="static/pdfs/ev_poster.pdf" target="_blank"
+                     class="external-link button is-normal is-rounded is-dark">
+                    <span class="icon"><i class="fas fa-file-pdf"></i></span>
+                    <span>Poster</span>
+                  </a>
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Teaser -->
+  <section class="hero teaser">
+    <div class="container is-max-desktop">
+      <div class="hero-body">
+        <img src="static/images/overlay_telephone_diag45_x.png" alt="Stroboscopic overlay of a telephone deforming under an impulse"/>
+        <h2 class="subtitle has-text-centered" style="margin-top:1rem">
+          An object set in motion, recovered from video alone. We jointly infer the initial velocity
+          <em>v</em><sub>0</sub>, the pre-stressed initial deformation <em>F</em><sub>0</sub>, and a
+          spatially-varying Young's modulus <em>E</em> by back-propagating through a differentiable
+          physics engine.
+        </h2>
+      </div>
+    </div>
+  </section>
+
+  <!-- Abstract -->
+  <section class="section hero is-light">
+    <div class="container is-max-desktop">
+      <div class="columns is-centered has-text-centered">
+        <div class="column is-four-fifths">
+          <h2 class="title is-3">Abstract</h2>
+          <div class="content has-text-justified">
+            <p>
+              Classical physical system identification makes two convenient assumptions: the object
+              starts <strong>at rest</strong>, and it is made of <strong>one homogeneous material</strong>.
+              Real objects break both. We pose a harder inverse problem: from observed dynamics, recover a
+              <strong>complex initial condition</strong> (a velocity field and a pre-stressed deformation
+              state) on a <strong>non-uniform material field</strong>. We build the recovery on a fully
+              differentiable Material-Point-Method simulator coupled to 3D Gaussian Splatting, and study
+              <em>when</em> each quantity is actually identifiable. We further show that the usual L2
+              objective struggles with oscillatory motion, and analyze a <strong>spectral loss</strong>
+              together with the landscape of the objective across setups.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Motivation -->
+  <section class="section">
+    <div class="container is-max-desktop">
+      <h2 class="title is-3">Motivation</h2>
+      <div class="content has-text-justified">
+        <ul>
+          <li><strong>Rest-state assumption.</strong> Objects are assumed at rest at <em>t&nbsp;=&nbsp;0</em>. How do we learn dynamics for something <em>released from a deformed state</em>?</li>
+          <li><strong>Scalar material.</strong> A single global stiffness is fit. Can we instead recover a <em>field</em> and model spatially-varying materials?</li>
+          <li><strong>Identifiability.</strong> Differentiable physics does not always converge to ground truth. <em>When</em> is the system genuinely identifiable?</li>
+          <li><strong>Loss design.</strong> L2-style losses are weak for oscillations: a frequency mismatch is bounded and breeds local minima.</li>
+          <li><strong>Coupling.</strong> Velocity and material are often fit independently. We train them <em>jointly</em> and characterize the regime where each dominates.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== SECTION 1: F0 ===================== -->
+  <section class="section hero is-light">
+    <div class="container is-max-desktop">
+      <h2 class="title is-3">Released from a deformed state (<em>F</em><sub>0</sub>)</h2>
+      <div class="content has-text-justified">
+        <p>Most methods assume the object is at rest at <em>t&nbsp;=&nbsp;0</em>. We instead parametrize the
+          initial displacement field with an MLP and recover the pre-stressed deformation gradient
+          <em>F</em><sub>0</sub> by autograd through the simulator. The recovered pre-stress reproduces the
+          full release-and-oscillation dynamics.</p>
+      </div>
+
+      <h3 class="title is-5">Pre-stressed spring, released from rest</h3>
+      <div class="columns is-centered">
+        <div class="column is-half gifcard">
+          <img src="static/images/spring_F0_render.gif" alt="rendered spring oscillation"/>
+          <p class="fig-cap has-text-centered is-size-6">Rendered rollout of the recovered pre-stress (image space)</p>
+        </div>
+        <div class="column is-half gifcard">
+          <img src="static/images/spring_F0_cloud.gif" alt="3D point-cloud spring oscillation"/>
+          <p class="fig-cap has-text-centered is-size-6">Same rollout as a 3D point cloud</p>
+        </div>
+      </div>
+      <div class="columns is-centered">
+        <div class="column is-half">
+          <figure class="image"><img src="static/images/spring_F0_xz_overlay.png" alt="spring oscillation xz overlay"></figure>
+          <p class="fig-cap has-text-centered is-size-6">Stroboscopic overlay, <em>xz</em> view</p>
+        </div>
+      </div>
+
+      <h3 class="title is-5" style="margin-top:1.5rem">Pre-stressed bend</h3>
+      <div class="columns is-centered">
+        <div class="column"><figure class="image"><img src="static/images/ybend_gradu_f0.png" alt="t=0"></figure><p class="fig-cap has-text-centered is-size-6">t = 0 &middot; released bend</p></div>
+        <div class="column"><figure class="image"><img src="static/images/ybend_gradu_f4.png" alt="t=4"></figure><p class="fig-cap has-text-centered is-size-6">t = 4</p></div>
+        <div class="column"><figure class="image"><img src="static/images/ybend_gradu_f8.png" alt="t=8"></figure><p class="fig-cap has-text-centered is-size-6">t = 8 &middot; colour = local strain</p></div>
+      </div>
+
+      <div class="columns is-centered metric-row has-text-centered" style="margin-top:.5rem">
+        <div class="column is-half">
+          <p class="title is-4 metric" style="margin-bottom:.1rem">1.2&times;10<sup>&minus;3</sup></p>
+          <p class="is-size-6"><em>F</em><sub>0</sub> bend &middot; rest-state RMSE &middot; shear-profile corr 0.99</p>
+        </div>
+        <div class="column is-half">
+          <p class="title is-4 metric" style="margin-bottom:.1rem">9.1&times;10<sup>&minus;5</sup></p>
+          <p class="is-size-6"><em>F</em><sub>0</sub> spring &middot; rest-state RMSE (uniform pre-stress)</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== SECTION 2: v0 field ===================== -->
+  <section class="section">
+    <div class="container is-max-desktop">
+      <h2 class="title is-3">Inhomogeneous initial velocity (<em>v</em><sub>0</sub> field)</h2>
+      <div class="content has-text-justified">
+        <p>Prior work often assumes the object moves uniformly in a single direction. We recover a
+          spatially-varying initial velocity field <em>v</em><sub>0</sub>(x) on a voxel grid, optimized
+          end-to-end through the simulator. The recovered field reproduces the bend even though only its
+          rollout is observed.</p>
+      </div>
+      <div class="columns is-centered">
+        <div class="column"><figure class="image"><img src="static/images/field_a16_bend_s6_cloud_gt.png" alt="GT v0 field"></figure><p class="fig-cap has-text-centered is-size-6">Ground-truth <em>v</em><sub>0</sub>-field rollout</p></div>
+        <div class="column"><figure class="image"><img src="static/images/field_a16_bend_s6_cloud_pred.png" alt="recovered v0 field"></figure><p class="fig-cap has-text-centered is-size-6">Recovered <em>v</em><sub>0</sub>-field rollout</p></div>
+      </div>
+      <div class="columns is-centered metric-row has-text-centered" style="margin-top:.5rem">
+        <div class="column is-half">
+          <p class="title is-4 metric" style="margin-bottom:.1rem">0.97</p>
+          <p class="is-size-6"><em>v</em><sub>0</sub> bend-field &middot; profile corr (shape recovered; amplitude smoothed)</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== SECTION 3: E field ===================== -->
+  <section class="section hero is-light">
+    <div class="container is-max-desktop">
+      <h2 class="title is-3">Inhomogeneous material (<em>E</em> field)</h2>
+      <div class="content has-text-justified">
+        <p>A single global stiffness cannot describe a soft tip on a stiff stem. We recover a
+          spatially-varying Young's modulus <em>E</em>(x). Here a circular excitation probes the field;
+          the recovered stiffness matches ground truth to a few percent.</p>
+      </div>
+      <div class="columns is-centered">
+        <div class="column is-two-thirds">
+          <figure class="image"><img src="static/images/efcirc_uniformv0_cloud.png" alt="circular E field rollout"></figure>
+          <p class="fig-cap has-text-centered is-size-6">Spatially-varying <em>E</em>(x) under a circular excitation</p>
+        </div>
+      </div>
+      <div class="columns is-centered metric-row has-text-centered" style="margin-top:.5rem">
+        <div class="column is-half">
+          <p class="title is-4 metric" style="margin-bottom:.1rem">2.8%</p>
+          <p class="is-size-6"><em>E</em> field &middot; relative error (log<em>E</em> error 0.012)</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== SECTION 4: image-space recovery ===================== -->
+  <section class="section">
+    <div class="container is-max-desktop">
+      <h2 class="title is-3">Image-space recovery (telephone)</h2>
+      <div class="content has-text-justified">
+        <p>The whole pipeline is differentiable end-to-end, so the recovery can be driven directly by a
+          rendered video, with background, through 3D Gaussian Splatting. From a static initial condition
+          and the observed motion, we recover the underlying trajectory.</p>
+      </div>
+      <div class="columns is-centered">
+        <div class="column"><figure class="image"><img src="static/images/traj_cloud_telephone_x_t0.png" alt="initial condition"></figure><p class="fig-cap has-text-centered is-size-6">Static initial condition (t = 0)</p></div>
+        <div class="column"><figure class="image"><img src="static/images/traj_cloud_telephone_x.png" alt="recovered trajectory cloud"></figure><p class="fig-cap has-text-centered is-size-6">Recovered trajectory (stroboscopic 3D cloud)</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Analysis -->
+  <section class="section hero is-light">
+    <div class="container is-max-desktop">
+      <h2 class="title is-3">Amplitude vs. frequency, and a spectral loss</h2>
+      <div class="content has-text-justified">
+        <p>By drawing the 2D objective landscape across setups, we find a clean division of labour:
+          <strong><em>E</em> (and Poisson's ratio) governs frequency</strong>, while
+          <strong><em>v</em><sub>0</sub> / <em>F</em><sub>0</sub> govern amplitude</strong>. Because a
+          time-domain L2 loss bounds frequency mismatch and folds under Nyquist sampling, we analyze a
+          spectral loss that exposes the period&ndash;stiffness relation
+          <em>T</em>&nbsp;&prop;&nbsp;1/&radic;<em>E</em> directly.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Poster -->
+  <section class="hero is-small">
+    <div class="hero-body">
+      <div class="container is-max-desktop">
+        <h2 class="title is-3">Poster</h2>
+        <iframe src="static/pdfs/ev_poster.pdf" width="100%" height="650"></iframe>
+      </div>
+    </div>
+  </section>
+
+  <!-- References -->
+  <section class="section" id="references">
+    <div class="container is-max-desktop content">
+      <h2 class="title is-3">References &amp; Related Work</h2>
+      <ul>
+        <li>J. Cai, Y. Yang, W. Yuan, et al.
+          <a href="https://arxiv.org/abs/2406.14927" target="_blank"><em>Gaussian-Informed Continuum for Physical Property Identification and Simulation</em></a>. NeurIPS 2024 (Oral). <span class="has-text-grey">Inverse-pipeline backbone this project builds on.</span></li>
+        <li>B. Kerbl, G. Kopanas, T. Leimk&uuml;hler, G. Drettakis.
+          <a href="https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/" target="_blank"><em>3D Gaussian Splatting for Real-Time Radiance Field Rendering</em></a>. SIGGRAPH 2023.</li>
+        <li>T. Xie, Z. Zong, Y. Qiu, et al.
+          <a href="https://xpandora.github.io/PhysGaussian/" target="_blank"><em>PhysGaussian: Physics-Integrated 3D Gaussians for Generative Dynamics</em></a>. CVPR 2024.</li>
+        <li>T. Zhang, Q. Yu, R. Gao, et al.
+          <a href="https://physdreamer.github.io/" target="_blank"><em>PhysDreamer: Physics-Based Interaction with 3D Objects via Video Generation</em></a>. ECCV 2024.</li>
+        <li>X. Li, Y.-L. Qiao, P. Y. Chen, et al.
+          <a href="https://xuan-li.github.io/PAC-NeRF/" target="_blank"><em>PAC-NeRF: Physics Augmented Continuum NeRF for Geometry-Agnostic System Identification</em></a>. ICLR 2023.</li>
+        <li>L. Zhong, H.-X. Yu, J. Wu, Y. Li.
+          <a href="https://zlicheng.com/spring_gaus/" target="_blank"><em>Reconstruction and Simulation of Elastic Objects with Spring-Mass 3D Gaussians</em></a>. ECCV 2024.</li>
+        <li>Y. Hu, Y. Fang, Z. Ge, et al. <em>A Moving Least Squares Material Point Method with Displacement Discontinuity and Two-Way Rigid Body Coupling (MLS-MPM)</em>. SIGGRAPH 2018.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- BibTeX -->
+  <section class="section" id="BibTeX">
+    <div class="container is-max-desktop content">
+      <div class="bibtex-header">
+        <h2 class="title">BibTeX</h2>
+        <button class="copy-bibtex-btn" onclick="copyBibTeX()" title="Copy BibTeX to clipboard">
+          <i class="fas fa-copy"></i><span class="copy-text">Copy</span>
+        </button>
+      </div>
+      <pre id="bibtex-code"><code>@misc{hong2026beyondrest,
+  title  = {Beyond Rest-State, Homogeneous System Identification},
+  author = {Hong, Casey},
+  note   = {Embodied Vision (CSIE5421) final project, National Taiwan University},
+  year   = {2026},
+  url    = {https://kc0506.github.io/ev-final-project/}
+}</code></pre>
+    </div>
+  </section>
+
+  <footer class="footer">
+    <div class="container">
+      <div class="columns is-centered">
+        <div class="column is-8">
+          <div class="content has-text-centered">
+            <img src="static/images/github_qr_logo.png" alt="GitHub repository QR" width="130" height="130" style="image-rendering:pixelated">
+            <p><a href="https://github.com/kc0506/ev-final-project" target="_blank">github.com/kc0506/ev-final-project</a></p>
+            <p>
+              This page was built using the <a href="https://github.com/eliahuhorwitz/Academic-project-page-template" target="_blank">Academic Project Page Template</a>, adopted from the <a href="https://nerfies.github.io" target="_blank">Nerfies</a> project page.
+              Licensed under a <a rel="license" href="http://creativecommons.org/licenses/by-sa/4.0/" target="_blank">CC BY-SA 4.0</a> license.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </footer>
+  </main>
+
+</body>
+</html>
